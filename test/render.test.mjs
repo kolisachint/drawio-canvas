@@ -73,3 +73,34 @@ describe("renderer", () => {
 		assert.equal(svgOf(SAMPLE_XML), svgOf(SAMPLE_XML));
 	});
 });
+
+describe("label contrast", () => {
+	it("colours a label for the shape it sits on, not for the page", async () => {
+		const { inkOn } = await import("../lib/render.mjs");
+		assert.equal(inkOn("#dae8fc"), "#12161c");
+		assert.equal(inkOn("#1f2933"), "#f5f7fa");
+		assert.equal(inkOn("#fff"), "#12161c");
+		assert.equal(inkOn("none"), null);
+
+		// A pale fill keeps dark text even when the page is dark — the failure this
+		// prevents is near-white text on a pastel box, which reads as broken.
+		const { renderOptions } = await import("../lib/render.mjs");
+		const dark = renderOptions({ fill: "#232a33", stroke: "#e8ebf0", fontColor: "#e8ebf0" });
+		const page = DrawioDocument.parse(
+			'<mxCell id="p" value="Pale" style="rounded=1;fillColor=#dae8fc;" vertex="1" parent="1"><mxGeometry x="0" y="0" width="100" height="40" as="geometry"/></mxCell>',
+		).page();
+		assert.match(renderPageSvg(page, dark), /fill="#12161c"[^>]*>.*Pale/s);
+
+		// An unfilled shape still follows the page.
+		const unfilled = DrawioDocument.parse(
+			'<mxCell id="u" value="Plain" style="rounded=1;fillColor=none;" vertex="1" parent="1"><mxGeometry x="0" y="0" width="100" height="40" as="geometry"/></mxCell>',
+		).page();
+		assert.match(renderPageSvg(unfilled, dark), /fill="#e8ebf0"[^>]*>.*Plain/s);
+
+		// And an explicit fontColor is never second-guessed.
+		const explicit = DrawioDocument.parse(
+			'<mxCell id="e" value="Mine" style="rounded=1;fillColor=#dae8fc;fontColor=#b85450;" vertex="1" parent="1"><mxGeometry x="0" y="0" width="100" height="40" as="geometry"/></mxCell>',
+		).page();
+		assert.match(renderPageSvg(explicit, dark), /fill="#b85450"[^>]*>.*Mine/s);
+	});
+});

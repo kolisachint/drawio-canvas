@@ -197,7 +197,7 @@ lib/
   files.mjs       reading and writing .drawio, and the workspace rule
   server.mjs      the loopback server, the token, and the event stream
 ui/               the editor: index.html, app.css, app.mjs, editor.mjs
-test/             96 tests (86 of them need no browser), no dependencies
+test/             97 tests (87 of them need no browser), no dependencies
 ```
 
 The four modules marked above are loaded **by both halves** — the extension
