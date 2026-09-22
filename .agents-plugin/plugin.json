@@ -1,0 +1,6 @@
+{
+	"name": "drawio-canvas",
+	"version": "0.1.0",
+	"description": "A draw.io diagram a person and an agent edit together, served from the canvas itself: no editor to install, no service to run, nothing loaded from the network.",
+	"author": { "name": "kolisachint" }
+}

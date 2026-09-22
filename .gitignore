@@ -1,0 +1,8 @@
+# The extension directory must contain no package.json and no node_modules:
+# the SDK import is resolved by the host, and a local install would shadow it.
+# Both are listed here so an accidental `npm install` cannot be committed.
+node_modules/
+package.json
+package-lock.json
+
+.DS_Store
