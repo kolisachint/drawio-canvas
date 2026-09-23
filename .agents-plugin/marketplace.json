@@ -1,0 +1,16 @@
+{
+	"name": "drawio-canvas",
+	"owner": { "name": "kolisachint" },
+	"metadata": {
+		"description": "The full draw.io editor as a hoocode canvas that a person and an agent edit together.",
+		"version": "0.2.0"
+	},
+	"supportPlatform": ["agents"],
+	"plugins": [
+		{
+			"name": "drawio-canvas",
+			"source": "./",
+			"description": "The full draw.io editor (pinned 31.4.6, bundled, offline) that a person and an agent edit at the same time."
+		}
+	]
+}

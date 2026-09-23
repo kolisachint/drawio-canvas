@@ -24,8 +24,29 @@ made here opens in draw.io, and the other way round.
 
 ## Install
 
+### From hoocode (recommended)
+
+This repository is its own plugin marketplace
+(`.agents-plugin/marketplace.json`), so hoocode installs it in three commands:
+
+```
+/plugin marketplace add https://github.com/kolisachint/drawio-canvas
+/plugin install drawio-canvas --scope user
+/canvas open drawio-canvas
+```
+
+`--scope user` puts it in `~/.agents/plugins/drawio-canvas` for every project;
+`--scope project` puts it in `<project>/.agents/plugins/drawio-canvas` for this
+one. `/plugin list` shows it, `/canvas list` should show
+`drawio-canvas  Draw.io Canvas`, and `/plugin marketplace refresh` followed by
+`/plugin install drawio-canvas` picks up a newer version.
+
+### By hand
+
 The canvas is one directory with `extension.mjs` at its root; the directory
 must be named `drawio-canvas`, because a canvas's id is its directory name.
+
+macOS / Linux:
 
 ```bash
 # For one project
@@ -35,14 +56,40 @@ git clone https://github.com/kolisachint/drawio-canvas .agents/extensions/drawio
 git clone https://github.com/kolisachint/drawio-canvas ~/.copilot/extensions/drawio-canvas
 ```
 
-It also carries a plugin manifest, so `/plugin install` works too. Then
-`/canvas open drawio-canvas`.
+Windows (PowerShell):
 
-**Requirements.** Node 20.6 or newer (hoocode's own requirement for canvases).
-No install step, no build, no dependencies. On first open the bundled archive is
-verified and unpacked into the cache (`~/.cache/drawio-canvas`,
-`~/Library/Caches/drawio-canvas`, or `%LOCALAPPDATA%\drawio-canvas`; about two
-seconds). `node scripts/install-drawio.mjs` does the same ahead of time.
+```powershell
+# For one project
+git clone https://github.com/kolisachint/drawio-canvas .agents\extensions\drawio-canvas
+
+# For every project on this machine
+git clone https://github.com/kolisachint/drawio-canvas "$HOME\.copilot\extensions\drawio-canvas"
+```
+
+Then `/canvas open drawio-canvas`. To update, `git pull` in that directory and
+`/canvas reload drawio-canvas`.
+
+Optionally unpack draw.io ahead of the first open (otherwise it happens on
+first open, about two seconds):
+
+```bash
+node scripts/install-drawio.mjs
+```
+
+### Compatibility
+
+| | Supported |
+|---|---|
+| **hoocode** | **0.5.81 or newer.** 0.5.81 is the first release that tells a canvas its working directory; on older releases the canvas opens, but **Open…** / **Save** and the `open_file` / `save_file` / `screenshot` actions need `DRAWIO_CANVAS_WORKSPACE` set. |
+| **Node.js** | **20.6 or newer** on `PATH` (hoocode forks canvases with Node, also when hoocode itself is the standalone binary). No npm install, no build, no dependencies. |
+| **OS** | macOS, Linux and Windows 10/11. Nothing is native; the only platform difference is the cache directory below. |
+| **Browser** | Any current browser draw.io supports (Chrome, Edge, Firefox, Safari). The page is served on `127.0.0.1`; the end-to-end tests run in Chromium. |
+| **draw.io** | 31.4.6, bundled and pinned by SHA-256. Files are ordinary `.drawio` and open in any draw.io (desktop, app.diagrams.net) and vice versa. |
+| **Network** | None needed at any point. |
+
+On first open the bundled archive is verified and unpacked into the cache
+(`~/.cache/drawio-canvas` on Linux, `~/Library/Caches/drawio-canvas` on macOS,
+`%LOCALAPPDATA%\drawio-canvas` on Windows).
 
 | Variable | Effect |
 |---|---|
@@ -137,6 +184,7 @@ gate is not in front of it. So:
 
 ```
 extension.mjs        the host-facing surface
+.agents-plugin/      plugin.json and marketplace.json — what /plugin reads
 assets/              drawio-31.4.6.war — the pinned draw.io release
 data/                shapes-31.4.6.json.gz — every library shape, for search_shapes
 lib/
