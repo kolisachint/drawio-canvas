@@ -1,9 +1,11 @@
 /**
  * drawio-canvas — a draw.io diagram that a person and an agent edit together.
  *
- * Open it with `/canvas open drawio-canvas`. The person gets an editor in their
- * browser; the agent gets six actions against the same document; each sees the
- * other's changes as they happen.
+ * Open it with `/canvas open drawio-canvas`. The person gets the full draw.io
+ * editor in their browser — the pinned release bundled in `assets/`, served on
+ * loopback, every shape library, layers, pages — and the agent gets actions
+ * against the same document: read, edit, insert library shapes, lay out,
+ * screenshot. Each sees the other's changes as they happen.
  *
  * This file is the whole of the host-facing surface, and it is deliberately
  * thin. The contract it has to keep (hoocode's `docs/canvas-extensions-design.md`,
@@ -14,15 +16,8 @@
  *    and no `node_modules`, and adding either is how you break it.
  *  - stdout is the JSON-RPC channel. `session.log`, never `console.log`.
  *
- * Everything else is in `lib/`, which the page in the browser loads too: the
- * same parser, document model and renderer run on both sides, so the two
- * operators cannot disagree about what the document is.
- *
- * The editor is this canvas's own, not an embedded draw.io. A canvas has to be
- * enough on its own — nothing to install, no service to run, no third-party
- * origin in the page, and nothing fetched from the network. What that costs is
- * rendering fidelity, and `lib/render.mjs` says exactly what is drawn and why
- * everything it cannot draw still round-trips untouched.
+ * Everything else is in `lib/` (the document, the sync, the actions, the
+ * server) and `ui/` (the page around draw.io). `AGENTS.md` is the map.
  */
 
 import { CanvasError, createCanvas, joinSession } from "@github/copilot-sdk/extension";

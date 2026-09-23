@@ -1,7 +1,9 @@
 /**
- * The editor, in a real browser, with a real agent editing underneath it.
+ * The lite editor (`ui/lite/`, the fallback used when draw.io cannot be
+ * fetched), in a real browser, with a real agent editing underneath it.
+ * `test/drawio.test.mjs` covers the draw.io editor itself.
  *
- * This is the only test that covers `ui/` — the pointer gestures, the live
+ * This covers the lite editor's pointer gestures, the live
  * reload over SSE, and the fact that the page's own edits come back as the same
  * cell operations the agent sends. Everything it drives is real: a forked-free
  * but otherwise complete canvas, its loopback server, and Chromium.
@@ -47,7 +49,7 @@ before(async () => {
 	page.on("pageerror", (error) => {
 		throw error;
 	});
-	await page.goto(canvas.url, { waitUntil: "networkidle" });
+	await page.goto(`${canvas.url}lite/`, { waitUntil: "networkidle" });
 	await page.waitForSelector("#status");
 });
 
