@@ -22,6 +22,11 @@ import { createDrawioCanvas } from "../lib/canvas.mjs";
 
 export const EXTENSION_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
+// Tests unpack draw.io and write draw.io preferences; neither belongs in the
+// person's real cache. One shared directory, so the bundled archive is unpacked
+// once per machine rather than once per test.
+process.env.DRAWIO_CANVAS_CACHE ??= path.join(tmpdir(), "drawio-canvas-test-cache");
+
 /** The SDK's `CanvasError`: a message plus a machine-readable code. */
 export class CanvasError extends Error {
 	constructor(code, message) {

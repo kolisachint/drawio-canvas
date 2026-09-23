@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width,initial-scale=1" />
+		<title>Draw.io Canvas (lite)</title>
+		<base href="../" />
+		<link rel="stylesheet" href="ui/lite/app.css" />
+	</head>
+	<body>
+		<header class="bar" id="toolbar">
+			<div class="group" role="group" aria-label="Insert">
+				<button class="tool" data-insert="rounded" title="Rounded box (R)"><span class="glyph glyph-rounded"></span></button>
+				<button class="tool" data-insert="rectangle" title="Box (B)"><span class="glyph glyph-rect"></span></button>
+				<button class="tool" data-insert="ellipse" title="Ellipse (E)"><span class="glyph glyph-ellipse"></span></button>
+				<button class="tool" data-insert="rhombus" title="Decision (D)"><span class="glyph glyph-rhombus"></span></button>
+				<button class="tool" data-insert="cylinder" title="Store"><span class="glyph glyph-cylinder"></span></button>
+				<button class="tool" data-insert="note" title="Note"><span class="glyph glyph-note"></span></button>
+				<button class="tool" data-insert="text" title="Text (T)"><span class="glyph glyph-text">T</span></button>
+			</div>
+			<div class="group" role="group" aria-label="Style">
+				<label class="swatch" title="Fill">
+					<input type="color" id="fill-color" value="#dae8fc" />
+					<span class="swatch-face" id="fill-face"></span>
+				</label>
+				<label class="swatch" title="Line">
+					<input type="color" id="stroke-color" value="#6c8ebf" />
+					<span class="swatch-face ring" id="stroke-face"></span>
+				</label>
+				<button class="tool" id="style-none" title="No fill">∅</button>
+				<button class="tool" id="style-bold" title="Bold label"><b>B</b></button>
+				<button class="tool" id="style-dashed" title="Dashed line">- -</button>
+			</div>
+			<div class="group" role="group" aria-label="View">
+				<button class="tool" id="zoom-out" title="Zoom out">−</button>
+				<button class="tool" id="zoom-fit" title="Fit to content (F)">Fit</button>
+				<button class="tool" id="zoom-in" title="Zoom in">+</button>
+			</div>
+			<div class="spacer"></div>
+			<div class="group" role="group" aria-label="Document">
+				<button class="tool" id="open-file" title="Open a .drawio file from the workspace">Open</button>
+				<button class="tool" id="save-file" title="Save into the workspace">Save</button>
+				<button class="tool" id="download" title="Download a copy">Download</button>
+				<button class="tool" id="history" title="Version history">History</button>
+			</div>
+		</header>
+
+		<main id="stage-wrap">
+			<svg id="stage" xmlns="http://www.w3.org/2000/svg">
+				<defs>
+					<pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse">
+						<path d="M 10 0 L 0 0 0 10" fill="none" class="grid-line" stroke-width="1" />
+					</pattern>
+				</defs>
+				<g id="scene">
+					<rect id="grid-rect" x="-20000" y="-20000" width="40000" height="40000" fill="url(#grid)" />
+					<g id="content"></g>
+					<g id="overlay"></g>
+				</g>
+			</svg>
+			<div id="label-editor" hidden><textarea spellcheck="false"></textarea></div>
+			<div id="empty-hint" class="hint">
+				<p>Nothing on this page yet.</p>
+				<p class="muted">Add a shape from the toolbar, or ask the agent for a diagram — it draws onto this same page.</p>
+			</div>
+		</main>
+
+		<footer class="bar" id="statusbar">
+			<div class="tabs" id="tabs"></div>
+			<button class="tool" id="add-page" title="Add a page">+</button>
+			<div class="spacer"></div>
+			<span class="status" id="status">connecting…</span>
+		</footer>
+
+		<div class="sheet" id="sheet" hidden>
+			<div class="sheet-body" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+				<h2 id="sheet-title">Title</h2>
+				<div id="sheet-content"></div>
+				<div class="sheet-actions">
+					<button class="tool" id="sheet-cancel">Cancel</button>
+					<button class="tool primary" id="sheet-confirm">OK</button>
+				</div>
+			</div>
+		</div>
+
+		<div id="toasts" aria-live="polite"></div>
+
+		<script type="module" src="ui/lite/app.mjs"></script>
+	</body>
+</html>

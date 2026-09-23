@@ -19,29 +19,73 @@ describe("session", () => {
 		assert.equal(session.version, 2);
 	});
 
-	it("refuses an agent edit before the agent has looked", () => {
-		const session = new DiagramSession({ xml: SAMPLE_XML });
-		assert.deepEqual(session.editGate(), { ok: false, reason: "no-context" });
-		session.markSeen();
-		assert.deepEqual(session.editGate(), { ok: true });
+	const update = (id, label) => ({
+		operation: "update",
+		cell_id: id,
+		new_xml: `<mxCell value="${label}" style="rounded=1;" vertex="1" parent="1"><mxGeometry x="40" y="40" width="140" height="60" as="geometry"/></mxCell>`,
 	});
 
-	it("refuses an agent edit built on a document the person has changed", () => {
+	it("refuses an agent edit before the agent has looked", () => {
 		const session = new DiagramSession({ xml: SAMPLE_XML });
-		session.markSeen();
-		session.apply({}, [addBox("human")], { source: SOURCE_HUMAN });
-		assert.deepEqual(session.editGate(), { ok: false, reason: "stale" });
-		session.markSeen();
-		assert.deepEqual(session.editGate(), { ok: true });
+		const page = session.document.page();
+		assert.deepEqual(session.editGate(page, [addBox("a")]), { ok: false, reason: "no-context" });
+		session.markPageSeen(page);
+		assert.deepEqual(session.editGate(page, [addBox("a"), update("start", "Go")]), { ok: true });
+	});
+
+	it("refuses only the cells the person changed since the agent read them", () => {
+		const session = new DiagramSession({ xml: SAMPLE_XML });
+		const page = session.document.page();
+		session.markPageSeen(page);
+		session.apply({}, [update("start", "Begin")], { source: SOURCE_HUMAN });
+
+		// Working elsewhere on the page is not a conflict: the person editing one
+		// box does not stop the agent finishing the rest of the diagram.
+		assert.deepEqual(session.editGate(page, [addBox("new"), { operation: "delete", cell_id: "check" }]), { ok: true });
+
+		const verdict = session.editGate(page, [update("start", "Go")]);
+		assert.equal(verdict.ok, false);
+		assert.equal(verdict.reason, "stale");
+		assert.deepEqual(verdict.conflicts.map((conflict) => conflict.cell_id), ["start"]);
+		assert.match(verdict.conflicts[0].changes[0], /human: .*"Start" → "Begin"/);
+
+		// Reading just that cell is enough.
+		session.markCellsSeen(page, ["start"]);
+		assert.deepEqual(session.editGate(page, [update("start", "Go")]), { ok: true });
 	});
 
 	it("counts the agent's own writes as having been seen", () => {
 		// Otherwise every edit would need a read after it, doubling the round trips
 		// for a document nobody else touched.
 		const session = new DiagramSession({ xml: SAMPLE_XML });
-		session.markSeen();
+		const page = session.document.page();
+		session.markPageSeen(page);
 		session.apply({}, [addBox("a")], { source: SOURCE_AGENT });
-		assert.deepEqual(session.editGate(), { ok: true });
+		assert.deepEqual(session.editGate(page, [update("a", "A2"), update("start", "S")]), { ok: true });
+	});
+
+	it("tells the agent what the person did, once", () => {
+		const session = new DiagramSession({ xml: SAMPLE_XML });
+		session.apply({}, [addBox("mine")], { source: SOURCE_AGENT });
+		session.apply({}, [update("start", "Begin"), { operation: "delete", cell_id: "check" }], { source: SOURCE_HUMAN });
+		const told = session.tellAgent();
+		assert.equal(told.length, 3, told.join("\n"));
+		assert.ok(told.some((line) => /relabelled "Start" → "Begin"/.test(line)));
+		assert.ok(told.some((line) => /removed .*\[check\]/.test(line)));
+		assert.ok(told.every((line) => !/\[mine\]/.test(line)), "the agent's own edit is not reported back to it");
+		assert.equal(session.tellAgent(), undefined);
+	});
+
+	it("reports an opened file or a large edit as one line, not one per cell", () => {
+		const session = new DiagramSession();
+		session.replace(SAMPLE_XML, { source: SOURCE_HUMAN, label: "opened docs/flow.drawio" });
+		session.apply({}, Array.from({ length: 20 }, (_, n) => addBox(`bulk${n}`)), { source: SOURCE_HUMAN });
+		session.apply({}, [addBox("single")], { source: SOURCE_HUMAN });
+		const told = session.tellAgent();
+		assert.equal(told.length, 3, told.join("\n"));
+		assert.match(told[0], /^v2 human opened docs\/flow\.drawio on "Flow": 3 cell change\(s\).*call get_diagram/);
+		assert.match(told[1], /^v3 human edited 20 cells on "Flow"/);
+		assert.match(told[2], /^v4 human on "Flow": added rounded "single" \[single\]/);
 	});
 
 	it("tells subscribers what changed, and survives one that throws", () => {
@@ -74,7 +118,7 @@ describe("session", () => {
 		const session = new DiagramSession();
 		for (let n = 0; n < 60; n += 1) session.apply({}, [addBox(`c${n}`)], { source: SOURCE_HUMAN });
 		const summary = session.historySummary();
-		assert.ok(summary.length <= 40);
+		assert.ok(summary.length <= 61);
 		assert.ok(summary[0].version > summary[1].version);
 	});
 
