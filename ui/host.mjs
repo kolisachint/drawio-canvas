@@ -492,24 +492,38 @@ export class Bridge {
 	layout({ page_id, layout, cell_ids } = {}) {
 		return new Promise((resolve, reject) => {
 			const ui = this.ui;
+			const handleError = ui.handleError;
+			const restore = () => {
+				ui.handleError = handleError;
+				this.origin = null;
+			};
 			try {
 				if (page_id && ui.currentPage?.getId() !== page_id) this.focus({ page_id });
 				const graph = ui.editor.graph;
 				if (cell_ids?.length) graph.setSelectionCells(cell_ids.map((id) => graph.model.getCell(id)).filter(Boolean));
 				this.origin = "agent";
-				const done = () => {
+				// draw.io reports a failed layout with a dialog and never calls done. Take
+				// the report instead: the agent gets an error, and the person no dialog.
+				ui.handleError = (error) => {
+					restore();
+					reject(new Error(`draw.io could not run that layout: ${error?.message ?? error}`));
+				};
+				const done = async () => {
 					this.flush();
-					this.origin = null;
+					restore();
 					// Keep what moved in view: a layout that leaves the person looking at
 					// empty canvas reads as the diagram having vanished.
 					const cells = graph.getSelectionCount() > 0 ? graph.getSelectionCells() : graph.getChildCells(graph.getDefaultParent());
 					const bounds = graph.getBoundingBox(cells);
 					if (bounds) graph.scrollRectToVisible(bounds);
+					// Answer only once the moves have reached the server, so the agent's
+					// result can list them without the server guessing how long to wait.
+					await this.queue;
 					resolve({ page_id: ui.currentPage?.getId(), layout });
 				};
 				ui.executeLayoutSpec(layout, done);
 			} catch (cause) {
-				this.origin = null;
+				restore();
 				const presets = typeof this.win.ElkLayout !== "undefined" && this.win.ElkLayout.MENU_PRESETS ? Object.keys(this.win.ElkLayout.MENU_PRESETS) : [];
 				reject(new Error(`${cause.message}${presets.length ? ` Presets: ${presets.join(", ")}.` : ""}`));
 			}
@@ -643,7 +657,7 @@ function startEditor() {
 	});
 }
 
-function listen() {
+function listen({ onConnected } = {}) {
 	const events = new EventSource(api("api/events?role=editor"));
 	events.addEventListener("change", (event) => void bridge?.onServerChange(JSON.parse(event.data)));
 	events.addEventListener("rpc", (event) => void bridge?.handleRpc(JSON.parse(event.data)));
@@ -651,6 +665,7 @@ function listen() {
 		// A reconnect after the server restarted (a canvas reload) or the laptop
 		// slept: catch up on whatever was missed.
 		const hello = JSON.parse(event.data);
+		onConnected?.();
 		if (bridge && hello.version !== bridge.version) void bridge.onServerChange({ version: hello.version });
 		setStatus(bridge ? `v${hello.version}` : "connected");
 	});
@@ -757,6 +772,17 @@ $("history").addEventListener("click", () => void showHistory());
 
 // ------------------------------------------------------------------ boot
 
+/**
+ * Tell the canvas a person is here and draw.io is on its way.
+ *
+ * The agent's editor requests (screenshot, focus, layout) used to fail with
+ * no_editor for the seconds draw.io takes to start, which is exactly when an
+ * agent reacting to "I opened it" asks for a screenshot. While this stream is
+ * open the server holds such requests instead; it closes once the editor
+ * stream is registered, or with the tab.
+ */
+const loadingStream = new EventSource(api("api/events?role=loading"));
+
 async function boot() {
 	await waitForEditor();
 	$("loading").hidden = true;
@@ -765,15 +791,25 @@ async function boot() {
 	const { ui, win } = await startEditor();
 	persistSettings(win);
 	bridge = new Bridge(win, ui, { xml: lastState.xml, version: lastState.version });
-	window.drawioCanvas = bridge;
 	setStatus(`v${lastState.version}`);
-	listen();
+	// Ready means the server can reach this editor, not just that draw.io drew:
+	// announce it once the editor stream is registered.
+	await new Promise((resolve) =>
+		listen({
+			onConnected: () => {
+				loadingStream.close();
+				window.drawioCanvas = bridge;
+				resolve();
+			},
+		}),
+	);
 	// Catch a version that landed between the state read and the stream opening.
 	const state = await apiJson("api/state");
 	if (state.version !== bridge.version) void bridge.onServerChange({ version: state.version });
 }
 
 boot().catch((cause) => {
+	loadingStream.close();
 	console.error(cause);
 	setStatus(`failed to start: ${cause.message}`, "error");
 });

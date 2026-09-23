@@ -23,6 +23,8 @@ import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { deflateRawSync } from "node:zlib";
 import { cellGeometry, cellId, DrawioDocument } from "../lib/model.mjs";
+import { LAYOUT_NAMES, LAYOUT_PRESETS } from "../lib/canvas.mjs";
+import { summarize, sweep } from "./actions-sweep.mjs";
 import { openCanvas, SAMPLE_XML } from "./harness.mjs";
 
 const DRIVER = process.env.DRAWIO_CANVAS_PLAYWRIGHT;
@@ -132,6 +134,83 @@ describe("draw.io in the browser", { skip, timeout: 600_000 }, () => {
 			assert.deepEqual(cells, ["0", "1", "check", "link", "start"]);
 			const version = await s.frame.evaluate(() => window.EditorUi.VERSION);
 			assert.equal(version, "31.4.6");
+			assert.deepEqual(s.problems, []);
+		} finally {
+			await s.close();
+		}
+	});
+
+	/**
+	 * "I opened it, what do you see?" is when an agent reaches for a screenshot,
+	 * and it used to land in the seconds draw.io takes to boot and fail with
+	 * no_editor. A tab that is open and loading now holds the request; no tab at
+	 * all still fails at once, so nobody waits on a person who is not there.
+	 */
+	it("holds an editor request while the person's tab is loading, and fails fast with no tab", async () => {
+		const canvas = await openCanvas({ input: { xml: SAMPLE_XML } });
+		const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+		try {
+			const started = Date.now();
+			await assert.rejects(() => canvas.invoke("focus", {}), (error) => error.code === "no_editor");
+			assert.ok(Date.now() - started < 500, "with no tab open, no_editor should be immediate");
+			await page.goto(canvas.url);
+			// The page is up but draw.io has not booted yet: ask straight away.
+			await page.waitForFunction(() => document.readyState !== "loading");
+			assert.equal(await page.evaluate(() => Boolean(window.drawioCanvas)), false);
+			const shot = await canvas.invoke("screenshot", {});
+			assert.match(shot.note, /Rendered by the person's draw\.io/);
+		} finally {
+			await page.close();
+			await canvas.close();
+		}
+	});
+
+	/**
+	 * The sweep again, with the person's draw.io open: now focus, layout, real
+	 * screenshots and PNG export run in the editor, and every accepted edit is
+	 * merged into it. Nothing may break on either side, and afterwards the editor
+	 * must hold exactly what the server holds.
+	 */
+	it("survives every action and every kind of input with the person's editor open", async (t) => {
+		const s = await session();
+		try {
+			await mkdir(path.join(s.canvas.workspace, "out"), { recursive: true });
+			await writeFile(path.join(s.canvas.workspace, "notes.txt"), "just text");
+			const { problems, timings } = await sweep(s.canvas);
+			assert.deepEqual(problems, []);
+			await s.settle();
+			assert.deepEqual(canonical(await editorXml(s.frame)), canonical(await stateXml(s.canvas)));
+			assert.deepEqual(s.problems, []);
+			for (const row of summarize(timings)) {
+				t.diagnostic(`${row.name.padEnd(16)} ${String(row.calls).padStart(4)} calls  p50 ${row.p50.toFixed(1).padStart(6)} ms  max ${row.max.toFixed(1).padStart(7)} ms`);
+				assert.ok(row.p50 < 500, `${row.name} p50 ${row.p50.toFixed(1)} ms`);
+			}
+		} finally {
+			await s.close();
+		}
+	});
+
+	it("knows exactly the layouts this draw.io runs, and refuses others at once instead of hanging", async () => {
+		const s = await session();
+		try {
+			await s.frame.waitForFunction(() => typeof ElkLayout !== "undefined" && ElkLayout.MENU_PRESETS, null, { timeout: 30_000 });
+			const live = await s.frame.evaluate(() => ({ presets: Object.keys(ElkLayout.MENU_PRESETS), names: Graph.layoutNames, libavoid: [LibavoidRouting.SHORTHAND, LibavoidRouting.LAYOUT_NAME] }));
+			// Everything the canvas offers, draw.io runs (bar the "circle" alias, which it maps).
+			assert.deepEqual(LAYOUT_PRESETS.filter((name) => !["circle", "parallels", ...live.libavoid].includes(name)).sort(), [...live.presets].sort());
+			assert.deepEqual([...LAYOUT_NAMES].sort(), [...live.names, live.libavoid[1]].sort());
+
+			await s.canvas.invoke("get_diagram", {});
+			for (const layout of ["circle", "radialTree", "parallels", "elkLayered", [{ layout: "elkLayered" }]]) {
+				const result = await s.canvas.invoke("layout", { layout });
+				assert.equal(typeof result.version, "number", JSON.stringify(layout));
+			}
+			for (const layout of ["no-such-layout", "", [{ nonsense: true }], [{ layout: "mxNoSuch" }], []]) {
+				const started = Date.now();
+				await assert.rejects(() => s.canvas.invoke("layout", { layout }), (error) => error.code === "invalid_layout" && /verticalFlow/.test(error.message));
+				assert.ok(Date.now() - started < 200, `${JSON.stringify(layout)} took ${Date.now() - started} ms`);
+			}
+			// The person saw no error dialog from any of it.
+			assert.equal(await s.frame.evaluate(() => document.querySelectorAll(".geDialog").length), 0);
 			assert.deepEqual(s.problems, []);
 		} finally {
 			await s.close();

@@ -118,7 +118,7 @@ between canvases, as the desktop app keeps them.
 |---|---|
 | `get_diagram` | Pages, layers, and one page's cells as XML (an outline plus `cell_ids` for large pages). |
 | `get_changes` | What the person changed since the agent was last told, one line per change, and what they are looking at. |
-| `edit_diagram` | `add` / `update` / `delete` cells by id, all or nothing. |
+| `edit_diagram` | `add` / `update` / `delete` cells by id, in order. Failed operations are listed in `errors` and the rest apply; a stale-cell refusal applies none. |
 | `search_shapes` | Search draw.io's 11,800 library shapes by name — "aws lambda", "gcp bigquery", "azure function". |
 | `insert_shapes` | Insert library shapes by id with draw.io's exact style; the long icon styles never enter the model's context. |
 | `replace_diagram` | Replace a page or the document. Refused over the person's unseen work unless `force`. |
@@ -144,9 +144,17 @@ sends cell operations by id. Moving a box while the agent adds another is not a
 conflict — both land. Only writes to the same cell race, and the later wins.
 
 **The agent is gated per cell.** An update or delete is refused only if the
-person changed *that cell* since the agent last read it, with what they did and
-the one call that fixes it (`get_diagram` with those `cell_ids`). Work
-elsewhere on the page carries on. The person is never blocked.
+person changed *that cell* since the agent last read it, with what they did.
+When the cells are small enough (they almost always are) the refusal also
+carries their current XML and counts as reading them, so the agent's very next
+call can build on the person's version — no extra round trip to re-read, which
+with a real model is seconds saved. Work elsewhere on the page carries on. The
+person is never blocked.
+
+**The agent can wait for the person's editor.** Screenshots, focus, layout and
+rendered exports run in the person's draw.io. If their tab is open but draw.io
+is still starting, the request waits for it (up to 15 s) instead of failing;
+if no tab is open, it says so at once.
 
 **Changes merge into the live editor.** The agent's edits are applied with
 draw.io's own patch, so the person keeps their selection, scroll position,
@@ -157,6 +165,31 @@ the person did is still in flight, the editor is compared with the server and
 any drift is patched away. A randomized test of 40 rounds of simultaneous edits
 (move, add, rename, restyle, z-order, delete on both sides) checks that both end
 identical.
+
+---
+
+## How fast
+
+Measured with the person's draw.io open in Chromium (`scripts/e2e-hoocode.mjs`
+and `test/drawio.test.mjs`), on one machine:
+
+| What | Median | Worst seen |
+|---|---|---|
+| `/canvas open` | ~0.3 s | |
+| draw.io ready in the browser | ~2 s | ~5 s the very first time, while draw.io is unpacked |
+| An agent edit appearing in the person's draw.io | 28 ms | 36 ms |
+| A person's edit reaching `get_changes` | 12 ms | 19 ms |
+| `get_diagram`, `get_changes`, `edit_diagram`, `insert_shapes`, pages, layers | ~1 ms | ~50 ms for a 300-cell batch |
+| `search_shapes` | 4 ms | ~80 ms (first call loads the index) |
+| `screenshot`, `.png` export | ~27 ms | ~55 ms |
+| `.svg` export | 12 ms | 13 ms |
+| `focus` | 18 ms | ~0.4 s right after another selection change |
+| `layout` (animated for the person) | ~0.2 s | ~0.26 s |
+| A refused call (bad input, unknown layout, …) | <1 ms | |
+
+The model is told these classes in the canvas description, and hoocode reports
+the latency it actually observed for each action (`observed_ms`) in
+`list_canvas_capabilities`.
 
 ---
 
@@ -229,6 +262,16 @@ its discovery, `/canvas open`, agent tools and `reload_canvas`:
 ```bash
 HOOCODE_DRAWIO_CANVAS_DIR=$PWD HOOCODE_PLAYWRIGHT=/tmp/pw/node_modules/playwright \
   bunx vitest run --root <hoocode>/packages/coding-agent test/canvas-acceptance-drawio.test.ts
+```
+
+The whole collaboration, through a real hoocode, with a scripted model and the
+person in Chromium — install from this checkout as a plugin, open, draw, react
+to the person's edit, recover from a refused edit, and time every action:
+
+```bash
+HOOCODE_BIN=<hoocode>/packages/coding-agent/bin/hoocode.js \
+DRAWIO_CANVAS_PLAYWRIGHT=/tmp/pw/node_modules/playwright \
+  node scripts/e2e-hoocode.mjs --out /tmp/drawio-e2e   # --out keeps screenshots
 ```
 
 ### Continuous integration

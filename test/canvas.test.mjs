@@ -145,6 +145,31 @@ describe("get_diagram", () => {
 	});
 });
 
+describe("action input", () => {
+	// Some models see an untyped `input` and send it JSON-encoded as a string. Left
+	// alone that reaches a handler as a string and fails as "operations is not
+	// iterable" (internal_error); decoded, it is an ordinary call.
+	it("decodes an input sent as a JSON string", async () => {
+		await withCanvas({ input: { xml: SAMPLE_XML } }, async ({ invoke }) => {
+			const read = await invoke("get_diagram", JSON.stringify({ page_name: "Flow" }));
+			assert.equal(read.page.name, "Flow");
+			const result = await invoke("edit_diagram", JSON.stringify({ operations: [addBox("end", "Done", 60, 320)] }));
+			assert.equal(result.applied, 1);
+		});
+	});
+
+	it("refuses malformed input with invalid_input, not a TypeError", async () => {
+		await withCanvas({}, async ({ invoke }) => {
+			const invalid = (pattern) => (error) => error.code === "invalid_input" && pattern.test(error.message);
+			await assert.rejects(async () => invoke("edit_diagram", '{"operations": ['), invalid(/not valid JSON/));
+			await assert.rejects(async () => invoke("edit_diagram", "add a box"), invalid(/must be an object/));
+			await assert.rejects(async () => invoke("edit_diagram", {}), invalid(/operations is required/));
+			await assert.rejects(async () => invoke("edit_diagram", { operations: "[]" }), invalid(/operations must be an array/));
+			await assert.rejects(async () => invoke("manage_pages", {}), invalid(/op is required/));
+		});
+	});
+});
+
 describe("edit_diagram", () => {
 	it("adds, updates and deletes cells", async () => {
 		await withCanvas({ input: { xml: SAMPLE_XML } }, async ({ invoke }) => {
@@ -164,11 +189,24 @@ describe("edit_diagram", () => {
 		});
 	});
 
-	it("refuses to edit a diagram the agent has never read", async () => {
+	it("refuses to edit a diagram the agent has never read, handing it the page so the retry needs no re-read", async () => {
 		await withCanvas({ input: { xml: SAMPLE_XML } }, async ({ invoke }) => {
 			await assert.rejects(
 				async () => invoke("edit_diagram", { operations: [addBox("x", "x")] }),
-				(error) => error.code === "no_context" && /get_diagram/.test(error.message),
+				(error) => error.code === "no_context" && /counts as read/.test(error.message) && /id="check"/.test(error.message),
+			);
+			// The refusal carried the page, so the very next call goes through.
+			assert.equal((await invoke("edit_diagram", { operations: [addBox("x", "x")] })).applied, 1);
+		});
+	});
+
+	it("still sends the agent to get_diagram when the unread page is too big to carry", async () => {
+		const cells = Array.from({ length: 40 }, (_, i) => `<mxCell id="n${i}" value="Node with a fairly long label ${i}" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="${i * 10}" y="0" width="120" height="60" as="geometry"/></mxCell>`).join("");
+		const xml = `<mxfile><diagram id="p1" name="Big"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>${cells}</root></mxGraphModel></diagram></mxfile>`;
+		await withCanvas({ input: { xml } }, async ({ invoke }) => {
+			await assert.rejects(
+				async () => invoke("edit_diagram", { operations: [addBox("x", "x")] }),
+				(error) => error.code === "no_context" && /Call get_diagram/.test(error.message) && !/counts as read/.test(error.message),
 			);
 		});
 	});
@@ -196,15 +234,18 @@ describe("edit_diagram", () => {
 			const parallel = await invoke("edit_diagram", { operations: [addBox("x", "x", 500, 500)] });
 			assert.equal(parallel.applied, 1);
 			assert.ok(parallel.person.changes.some((line) => /relabelled "Start" → "Begin here"; moved to \(300, 40\)/.test(line)), JSON.stringify(parallel.person));
-			// Overwriting the cell they changed is refused, with what they did.
+			// Overwriting the cell they changed is refused, with what they did and what
+			// the cell is now, so the agent can build on it without a re-read.
 			await assert.rejects(
 				async () => invoke("edit_diagram", { operations: [{ ...addBox("start", "Start!"), operation: "update" }] }),
-				(error) => error.code === "stale_cells" && /Begin here/.test(error.message) && /cell_ids \["start"\]/.test(error.message),
+				(error) =>
+					error.code === "stale_cells" &&
+					/relabelled "Start" → "Begin here"/.test(error.message) &&
+					/What is there now/.test(error.message) &&
+					/<mxCell id="start" value="Begin here"/.test(error.message),
 			);
-			// Reading that cell is the way back.
-			const seen = await invoke("get_diagram", { cell_ids: ["start"] });
-			assert.match(seen.cells_xml, /Begin here/);
-			assert.equal((await invoke("edit_diagram", { operations: [{ ...addBox("start", "Start!"), operation: "update" }] })).applied, 1);
+			// The refusal counted as reading the cell: the adjusted retry goes straight through.
+			assert.equal((await invoke("edit_diagram", { operations: [{ ...addBox("start", "Begin here!"), operation: "update" }] })).applied, 1);
 		});
 	});
 

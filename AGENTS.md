@@ -71,8 +71,52 @@ run several seeds after touching `sync.mjs`, `session.mjs` or `host.mjs`.
 
 hoocode end to end: `packages/coding-agent/test/canvas-acceptance-drawio.test.ts`
 on hoocode's branch, with `HOOCODE_DRAWIO_CANVAS_DIR` pointing here (see README).
+`scripts/e2e-hoocode.mjs` goes further: a real `hoocode --mode rpc`, this
+checkout installed through `/plugin`, a scripted model that sends JSON-string
+inputs (as Qwen does), and Chromium as the person. Run it after changing an
+action's contract, the gate, or anything in `server.mjs` / `host.mjs`; update
+the "How fast" table in README and the speeds in the canvas description if
+its timings move.
 
 ## Recent changes
+
+- **Every action is swept** (`test/actions-sweep.mjs`): ~700 right, wrong and
+  strange inputs across all 13 actions, without an editor
+  (`test/actions.test.mjs`) and with the person's draw.io open
+  (`test/drawio.test.mjs`, which also checks the editor still matches the
+  server). A call must succeed or be refused with a known code and a usable
+  message. Add a case there when you add an action or an input.
+- **Input is checked against each action's own inputSchema** (`checkValue`):
+  types, enums (options listed), bounds, items, required, unknown fields (with a
+  "did you mean"). `null` on an optional field means "not given".
+- **Fixed from the sweep:** `<mxfile>` with no pages emptied the document
+  (`no_pages`); `manage_pages` rename/delete without a page hit page 0; cells
+  with a missing parent were accepted (`invalid_parent`); `open_file` leaked
+  Node errno codes and absolute paths (`file_not_found`, `not_a_file`);
+  unknown layouts, including `"circle"` which the description advertised,
+  opened an error dialog in the person's editor and hung 25 s — layouts are now
+  checked against draw.io's own lists (`LAYOUT_PRESETS`/`LAYOUT_NAMES`, asserted
+  against the live editor) and refused in under 1 ms. `layout` no longer sleeps
+  150 ms: the page flushes its moves before answering.
+- **Descriptions say what really happens:** `edit_diagram` applies the good
+  operations and lists the failed ones in `errors` (it had claimed all or
+  nothing); speeds in the canvas description are the measured ones in README
+  "How fast". Re-measure and update both if the sync path changes.
+
+- **Refusals carry the fix.** `stale_cells` and `no_context` include the current
+  XML of what the agent missed (up to 3,000 characters) and mark it read, so the
+  retry needs no `get_diagram`. Larger misses still point at `get_diagram`.
+- **Malformed input is `invalid_input`,** not a TypeError. A JSON-string input
+  is decoded first (some models send `input` that way).
+- **Editor requests wait for a loading tab.** The page holds an
+  `/api/events?role=loading` stream from the moment it opens until its editor
+  stream is registered; `requestEditor` waits on it (15 s) instead of failing
+  with `no_editor`, and `screenshot`/`save_file` use the real render rather than
+  the fallback. `window.drawioCanvas` is set only once the editor is reachable.
+- **The canvas description is the agent's playbook:** the loop, the
+  collaboration rule, and measured speed classes. hoocode now shows it in
+  `list_canvas_capabilities`. The open-time `status` no longer freezes a
+  transient "installing".
 
 - **Full draw.io editor** replaces the canvas's own editor as the person's
   surface. draw.io 31.4.6 is bundled (`assets/drawio-31.4.6.war`, SHA-256
