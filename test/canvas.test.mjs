@@ -145,6 +145,31 @@ describe("get_diagram", () => {
 	});
 });
 
+describe("action input", () => {
+	// Some models see an untyped `input` and send it JSON-encoded as a string. Left
+	// alone that reaches a handler as a string and fails as "operations is not
+	// iterable" (internal_error); decoded, it is an ordinary call.
+	it("decodes an input sent as a JSON string", async () => {
+		await withCanvas({ input: { xml: SAMPLE_XML } }, async ({ invoke }) => {
+			const read = await invoke("get_diagram", JSON.stringify({ page_name: "Flow" }));
+			assert.equal(read.page.name, "Flow");
+			const result = await invoke("edit_diagram", JSON.stringify({ operations: [addBox("end", "Done", 60, 320)] }));
+			assert.equal(result.applied, 1);
+		});
+	});
+
+	it("refuses malformed input with invalid_input, not a TypeError", async () => {
+		await withCanvas({}, async ({ invoke }) => {
+			const invalid = (pattern) => (error) => error.code === "invalid_input" && pattern.test(error.message);
+			await assert.rejects(async () => invoke("edit_diagram", '{"operations": ['), invalid(/not valid JSON/));
+			await assert.rejects(async () => invoke("edit_diagram", "add a box"), invalid(/must be an object/));
+			await assert.rejects(async () => invoke("edit_diagram", {}), invalid(/operations is required/));
+			await assert.rejects(async () => invoke("edit_diagram", { operations: "[]" }), invalid(/operations must be an array/));
+			await assert.rejects(async () => invoke("manage_pages", {}), invalid(/op is required/));
+		});
+	});
+});
+
 describe("edit_diagram", () => {
 	it("adds, updates and deletes cells", async () => {
 		await withCanvas({ input: { xml: SAMPLE_XML } }, async ({ invoke }) => {
