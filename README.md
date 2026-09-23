@@ -118,7 +118,7 @@ between canvases, as the desktop app keeps them.
 |---|---|
 | `get_diagram` | Pages, layers, and one page's cells as XML (an outline plus `cell_ids` for large pages). |
 | `get_changes` | What the person changed since the agent was last told, one line per change, and what they are looking at. |
-| `edit_diagram` | `add` / `update` / `delete` cells by id, all or nothing. |
+| `edit_diagram` | `add` / `update` / `delete` cells by id, in order. Failed operations are listed in `errors` and the rest apply; a stale-cell refusal applies none. |
 | `search_shapes` | Search draw.io's 11,800 library shapes by name — "aws lambda", "gcp bigquery", "azure function". |
 | `insert_shapes` | Insert library shapes by id with draw.io's exact style; the long icon styles never enter the model's context. |
 | `replace_diagram` | Replace a page or the document. Refused over the person's unseen work unless `force`. |
@@ -156,24 +156,6 @@ rendered exports run in the person's draw.io. If their tab is open but draw.io
 is still starting, the request waits for it (up to 15 s) instead of failing;
 if no tab is open, it says so at once.
 
-## How fast
-
-Measured end to end through hoocode (`scripts/e2e-hoocode.mjs`), on one machine:
-
-| What | Time |
-|---|---|
-| `/canvas open` | ~0.3 s |
-| draw.io ready in the browser | ~2 s (~5 s the very first time, while draw.io is unpacked) |
-| Reads and edits (`get_diagram`, `get_changes`, `edit_diagram`, `insert_shapes`, pages, layers) | 0–3 ms |
-| An agent edit appearing in the person's editor | ~0.1–0.3 s |
-| `search_shapes` | ~80 ms |
-| `screenshot`, `.svg` export | ~10–40 ms |
-| `focus`, `layout` (run in the person's draw.io) | ~0.05–0.4 s |
-
-The model is told these classes in the canvas description, and hoocode reports
-the latency it actually observed for each action (`observed_ms`) in
-`list_canvas_capabilities`.
-
 **Changes merge into the live editor.** The agent's edits are applied with
 draw.io's own patch, so the person keeps their selection, scroll position,
 undo history and anything they are in the middle of.
@@ -183,6 +165,31 @@ the person did is still in flight, the editor is compared with the server and
 any drift is patched away. A randomized test of 40 rounds of simultaneous edits
 (move, add, rename, restyle, z-order, delete on both sides) checks that both end
 identical.
+
+---
+
+## How fast
+
+Measured with the person's draw.io open in Chromium (`scripts/e2e-hoocode.mjs`
+and `test/drawio.test.mjs`), on one machine:
+
+| What | Median | Worst seen |
+|---|---|---|
+| `/canvas open` | ~0.3 s | |
+| draw.io ready in the browser | ~2 s | ~5 s the very first time, while draw.io is unpacked |
+| An agent edit appearing in the person's draw.io | 28 ms | 36 ms |
+| A person's edit reaching `get_changes` | 12 ms | 19 ms |
+| `get_diagram`, `get_changes`, `edit_diagram`, `insert_shapes`, pages, layers | ~1 ms | ~50 ms for a 300-cell batch |
+| `search_shapes` | 4 ms | ~80 ms (first call loads the index) |
+| `screenshot`, `.png` export | ~27 ms | ~55 ms |
+| `.svg` export | 12 ms | 13 ms |
+| `focus` | 18 ms | ~0.4 s right after another selection change |
+| `layout` (animated for the person) | ~0.2 s | ~0.26 s |
+| A refused call (bad input, unknown layout, …) | <1 ms | |
+
+The model is told these classes in the canvas description, and hoocode reports
+the latency it actually observed for each action (`observed_ms`) in
+`list_canvas_capabilities`.
 
 ---
 

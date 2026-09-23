@@ -492,24 +492,38 @@ export class Bridge {
 	layout({ page_id, layout, cell_ids } = {}) {
 		return new Promise((resolve, reject) => {
 			const ui = this.ui;
+			const handleError = ui.handleError;
+			const restore = () => {
+				ui.handleError = handleError;
+				this.origin = null;
+			};
 			try {
 				if (page_id && ui.currentPage?.getId() !== page_id) this.focus({ page_id });
 				const graph = ui.editor.graph;
 				if (cell_ids?.length) graph.setSelectionCells(cell_ids.map((id) => graph.model.getCell(id)).filter(Boolean));
 				this.origin = "agent";
-				const done = () => {
+				// draw.io reports a failed layout with a dialog and never calls done. Take
+				// the report instead: the agent gets an error, and the person no dialog.
+				ui.handleError = (error) => {
+					restore();
+					reject(new Error(`draw.io could not run that layout: ${error?.message ?? error}`));
+				};
+				const done = async () => {
 					this.flush();
-					this.origin = null;
+					restore();
 					// Keep what moved in view: a layout that leaves the person looking at
 					// empty canvas reads as the diagram having vanished.
 					const cells = graph.getSelectionCount() > 0 ? graph.getSelectionCells() : graph.getChildCells(graph.getDefaultParent());
 					const bounds = graph.getBoundingBox(cells);
 					if (bounds) graph.scrollRectToVisible(bounds);
+					// Answer only once the moves have reached the server, so the agent's
+					// result can list them without the server guessing how long to wait.
+					await this.queue;
 					resolve({ page_id: ui.currentPage?.getId(), layout });
 				};
 				ui.executeLayoutSpec(layout, done);
 			} catch (cause) {
-				this.origin = null;
+				restore();
 				const presets = typeof this.win.ElkLayout !== "undefined" && this.win.ElkLayout.MENU_PRESETS ? Object.keys(this.win.ElkLayout.MENU_PRESETS) : [];
 				reject(new Error(`${cause.message}${presets.length ? ` Presets: ${presets.join(", ")}.` : ""}`));
 			}
