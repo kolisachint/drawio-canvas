@@ -18,9 +18,10 @@
  */
 
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
+import { deflateRawSync } from "node:zlib";
 import { cellGeometry, cellId, DrawioDocument } from "../lib/model.mjs";
 import { openCanvas, SAMPLE_XML } from "./harness.mjs";
 
@@ -417,6 +418,133 @@ describe("draw.io preferences", { skip, timeout: 120_000 }, () => {
 			});
 			await second.page.waitForTimeout(300);
 			await second.close();
+		}
+	});
+});
+
+describe("the person's own gestures and files", { skip, timeout: 300_000 }, () => {
+	it("syncs real mouse and keyboard edits: drag from the sidebar, move, F2, Delete, Ctrl+Z", async () => {
+		const s = await session();
+		try {
+			await s.canvas.invoke("get_diagram", {});
+			const frameBox = await s.page.locator("#editor").boundingBox();
+			const before = await s.person((ui) => Object.keys(ui.editor.graph.model.cells).length);
+			const item = await s.frame.locator(".geSidebarContainer a.geItem").first().boundingBox();
+			const canvasBox = await s.frame.locator(".geDiagramContainer").boundingBox();
+			await s.page.mouse.move(item.x + item.width / 2, item.y + item.height / 2);
+			await s.page.mouse.down();
+			await s.page.mouse.move(canvasBox.x + 500, canvasBox.y + 400, { steps: 12 });
+			await s.page.mouse.up();
+			await s.settle();
+			assert.equal(await s.person((ui) => Object.keys(ui.editor.graph.model.cells).length), before + 1);
+
+			const centre = await s.person((ui) => {
+				const graph = ui.editor.graph;
+				const state = graph.view.getState(graph.model.getCell("check"));
+				return { x: state.getCenterX() - graph.container.scrollLeft, y: state.getCenterY() - graph.container.scrollTop, left: graph.container.getBoundingClientRect().left, top: graph.container.getBoundingClientRect().top };
+			});
+			const x = frameBox.x + centre.left + centre.x;
+			const y = frameBox.y + centre.top + centre.y;
+			await s.page.mouse.move(x, y);
+			await s.page.mouse.down();
+			await s.page.mouse.move(x + 100, y + 100, { steps: 10 });
+			await s.page.mouse.up();
+			await s.page.keyboard.press("F2");
+			await s.page.keyboard.press("Control+A");
+			await s.page.keyboard.type("Is it valid?");
+			await s.page.mouse.click(frameBox.x + 900, frameBox.y + 700);
+			await s.settle();
+			const { changes } = await s.canvas.invoke("get_changes", {});
+			assert.ok(changes.some((line) => /\[check\]: moved/.test(line)), changes.join("\n"));
+			assert.ok(changes.some((line) => /\[check\]: relabelled "Valid\?" → "Is it valid\?"/.test(line)), changes.join("\n"));
+
+			await s.person((ui) => ui.editor.graph.setSelectionCells([ui.editor.graph.model.getCell("start")]));
+			await s.frame.locator(".geDiagramContainer").focus();
+			await s.page.keyboard.press("Delete");
+			await s.settle();
+			assert.doesNotMatch(await stateXml(s.canvas), /id="start"/);
+			await s.page.keyboard.press("Control+z");
+			await s.settle();
+			assert.match(await stateXml(s.canvas), /id="start"/);
+			assert.deepEqual(canonical(await editorXml(s.frame)), canonical(await stateXml(s.canvas)));
+			assert.deepEqual(s.problems, []);
+		} finally {
+			await s.close();
+		}
+	});
+
+	it("opens a compressed desktop file from the bar, and saves it back plain with Ctrl+S", async () => {
+		const compress = (xml) => deflateRawSync(Buffer.from(encodeURIComponent(xml))).toString("base64");
+		const first = '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><UserObject label="Service A" owner="team-a" id="svc"><mxCell style="rounded=1;" vertex="1" parent="1"><mxGeometry x="40" y="40" width="120" height="60" as="geometry"/></mxCell></UserObject></root></mxGraphModel>';
+		const second = '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="p2a" value="On page two" style="ellipse;" vertex="1" parent="1"><mxGeometry x="100" y="100" width="120" height="80" as="geometry"/></mxCell></root></mxGraphModel>';
+		const s = await session({});
+		try {
+			await mkdir(path.join(s.canvas.workspace, "docs"), { recursive: true });
+			await writeFile(path.join(s.canvas.workspace, "docs/arch.drawio"), `<mxfile host="Electron"><diagram id="d1" name="Services">${compress(first)}</diagram><diagram id="d2" name="Second">${compress(second)}</diagram></mxfile>`);
+			await s.page.click("#open-file");
+			await s.page.fill("#sheet-content input", "docs/arch.drawio");
+			await s.page.click("#sheet-confirm");
+			await s.settle();
+			const loaded = await s.person((ui) => ({ pages: ui.pages.map((page) => page.getName()), owner: ui.editor.graph.model.getCell("svc").value.getAttribute("owner") }));
+			assert.deepEqual(loaded, { pages: ["Services", "Second"], owner: "team-a" });
+			// One line for the whole file, not one per cell.
+			const { changes } = await s.canvas.invoke("get_changes", {});
+			assert.equal(changes.length, 1, changes.join("\n"));
+			assert.match(changes[0], /opened docs\/arch\.drawio .*call get_diagram/);
+
+			// The agent edits the page the person is not on; the person stays put.
+			await s.canvas.invoke("get_diagram", { page_name: "Second" });
+			await s.canvas.invoke("edit_diagram", {
+				page_name: "Second",
+				operations: [{ operation: "update", cell_id: "p2a", new_xml: '<mxCell value="Agent on page two" style="ellipse;" vertex="1" parent="1"><mxGeometry x="100" y="100" width="120" height="80" as="geometry"/></mxCell>' }],
+			});
+			await s.settle();
+			const shot = await s.canvas.invoke("screenshot", { page_name: "Second" });
+			assert.match(shot.path, /Second/);
+			await s.canvas.invoke("save_file", { path: "out/second.svg", page_name: "Second" });
+			assert.match(await readFile(path.join(s.canvas.workspace, "out/second.svg"), "utf8"), /Agent on page two/);
+			assert.equal(await s.person((ui) => ui.currentPage.getName()), "Services");
+
+			await s.person((ui) => {
+				const graph = ui.editor.graph;
+				const cell = graph.model.getCell("svc");
+				const value = cell.value.cloneNode(true);
+				value.setAttribute("owner", "team-b");
+				graph.model.setValue(cell, value);
+			});
+			await s.settle();
+			await s.frame.locator(".geDiagramContainer").focus();
+			await s.page.keyboard.press("Control+s");
+			await s.page.waitForTimeout(800);
+			const saved = await readFile(path.join(s.canvas.workspace, "docs/arch.drawio"), "utf8");
+			assert.match(saved, /<UserObject[^>]*owner="team-b"/);
+			assert.match(saved, /Agent on page two/);
+			assert.deepEqual(s.problems, []);
+		} finally {
+			await s.close();
+		}
+	});
+
+	it("lets an agent edit land while the person is typing a label", async () => {
+		const s = await session();
+		try {
+			await s.person((ui) => {
+				const graph = ui.editor.graph;
+				graph.startEditingAtCell(graph.model.getCell("start"));
+				graph.cellEditor.textarea.innerHTML = "Half typed";
+			});
+			await s.canvas.invoke("get_diagram", {});
+			await s.canvas.invoke("edit_diagram", {
+				operations: [{ operation: "update", cell_id: "check", new_xml: '<mxCell value="Agent" style="rhombus;" vertex="1" parent="1"><mxGeometry x="60" y="180" width="120" height="80" as="geometry"/></mxCell>' }],
+			});
+			await s.settle();
+			const during = await s.person((ui) => ({ editing: ui.editor.graph.isEditing(), text: ui.editor.graph.cellEditor.textarea.innerHTML, check: ui.editor.graph.model.getCell("check").value }));
+			assert.deepEqual(during, { editing: true, text: "Half typed", check: "Agent" });
+			await s.person((ui) => ui.editor.graph.stopEditing(false));
+			await s.settle();
+			assert.match((await s.canvas.invoke("get_diagram", { cell_ids: ["start"] })).cells_xml, /Half typed/);
+		} finally {
+			await s.close();
 		}
 	});
 });

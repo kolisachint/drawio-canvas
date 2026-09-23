@@ -76,6 +76,18 @@ describe("session", () => {
 		assert.equal(session.tellAgent(), undefined);
 	});
 
+	it("reports an opened file or a large edit as one line, not one per cell", () => {
+		const session = new DiagramSession();
+		session.replace(SAMPLE_XML, { source: SOURCE_HUMAN, label: "opened docs/flow.drawio" });
+		session.apply({}, Array.from({ length: 20 }, (_, n) => addBox(`bulk${n}`)), { source: SOURCE_HUMAN });
+		session.apply({}, [addBox("single")], { source: SOURCE_HUMAN });
+		const told = session.tellAgent();
+		assert.equal(told.length, 3, told.join("\n"));
+		assert.match(told[0], /^v2 human opened docs\/flow\.drawio on "Flow": 3 cell change\(s\).*call get_diagram/);
+		assert.match(told[1], /^v3 human edited 20 cells on "Flow"/);
+		assert.match(told[2], /^v4 human on "Flow": added rounded "single" \[single\]/);
+	});
+
 	it("tells subscribers what changed, and survives one that throws", () => {
 		const session = new DiagramSession();
 		const seen = [];

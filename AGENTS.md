@@ -93,6 +93,17 @@ on hoocode's branch, with `HOOCODE_DRAWIO_CANVAS_DIR` pointing here (see README)
 - **Preferences** (enabled libraries, theme, …) persist across canvases
   (`lib/settings.mjs`) despite each canvas being a new origin.
 - Editor RPCs go to the most recently opened tab only.
+- Whole-document events (a file opened, a version restored) and edits touching
+  more than 12 cells are reported to the agent as **one line** with a pointer to
+  `get_diagram`, instead of a line per cell; each line names its own page.
+- Verified end to end (and now in `test/drawio.test.mjs`): real mouse drags from
+  the sidebar and on the canvas, F2 relabel, Delete, Ctrl+Z, Ctrl+S to the open
+  file; a compressed desktop `.drawio` with UserObjects opened from the bar;
+  agent edits, screenshots and SVGs of a page the person is not on; an agent
+  edit landing while the person is mid-way through typing a label.
+- Audited: `/drawio/` needs the token and refuses raw and URL-encoded `../`;
+  the servlet side of the war is never unpacked; the page CSP blocks string
+  eval (only `'wasm-unsafe-eval'` for draw.io's WebAssembly edge router).
 
 ## Pending
 
@@ -125,5 +136,10 @@ Open work, roughly by value. Each is a place to pick up.
 - [ ] **Idle reconciliation is a safety net.** It fires about once per 40 fully
       concurrent rounds, on z-order interleavings. Understanding and removing
       the remaining ordering drift would be cleaner than correcting it.
+- [ ] **Merging into very large diagrams costs about a second.** At 2,000 cells:
+      load 2.9 s, person → server 0.2 s, agent edit visible 1.2 s. Each inbound
+      version re-parses the whole document twice (`getPagesForXml`) and diffs
+      it; sending the server's cell changes with the SSE event and patching
+      only those would make it proportional to the edit.
 - [ ] **Multiple tabs** each sync edits (fine) but only the newest answers agent
       requests; presence reflects whichever tab reported last.
