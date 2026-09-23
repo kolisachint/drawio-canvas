@@ -71,8 +71,29 @@ run several seeds after touching `sync.mjs`, `session.mjs` or `host.mjs`.
 
 hoocode end to end: `packages/coding-agent/test/canvas-acceptance-drawio.test.ts`
 on hoocode's branch, with `HOOCODE_DRAWIO_CANVAS_DIR` pointing here (see README).
+`scripts/e2e-hoocode.mjs` goes further: a real `hoocode --mode rpc`, this
+checkout installed through `/plugin`, a scripted model that sends JSON-string
+inputs (as Qwen does), and Chromium as the person. Run it after changing an
+action's contract, the gate, or anything in `server.mjs` / `host.mjs`; update
+the "How fast" table in README and the speeds in the canvas description if
+its timings move.
 
 ## Recent changes
+
+- **Refusals carry the fix.** `stale_cells` and `no_context` include the current
+  XML of what the agent missed (up to 3,000 characters) and mark it read, so the
+  retry needs no `get_diagram`. Larger misses still point at `get_diagram`.
+- **Malformed input is `invalid_input`,** not a TypeError. A JSON-string input
+  is decoded first (some models send `input` that way).
+- **Editor requests wait for a loading tab.** The page holds an
+  `/api/events?role=loading` stream from the moment it opens until its editor
+  stream is registered; `requestEditor` waits on it (15 s) instead of failing
+  with `no_editor`, and `screenshot`/`save_file` use the real render rather than
+  the fallback. `window.drawioCanvas` is set only once the editor is reachable.
+- **The canvas description is the agent's playbook:** the loop, the
+  collaboration rule, and measured speed classes. hoocode now shows it in
+  `list_canvas_capabilities`. The open-time `status` no longer freezes a
+  transient "installing".
 
 - **Full draw.io editor** replaces the canvas's own editor as the person's
   surface. draw.io 31.4.6 is bundled (`assets/drawio-31.4.6.war`, SHA-256

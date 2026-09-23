@@ -144,9 +144,35 @@ sends cell operations by id. Moving a box while the agent adds another is not a
 conflict — both land. Only writes to the same cell race, and the later wins.
 
 **The agent is gated per cell.** An update or delete is refused only if the
-person changed *that cell* since the agent last read it, with what they did and
-the one call that fixes it (`get_diagram` with those `cell_ids`). Work
-elsewhere on the page carries on. The person is never blocked.
+person changed *that cell* since the agent last read it, with what they did.
+When the cells are small enough (they almost always are) the refusal also
+carries their current XML and counts as reading them, so the agent's very next
+call can build on the person's version — no extra round trip to re-read, which
+with a real model is seconds saved. Work elsewhere on the page carries on. The
+person is never blocked.
+
+**The agent can wait for the person's editor.** Screenshots, focus, layout and
+rendered exports run in the person's draw.io. If their tab is open but draw.io
+is still starting, the request waits for it (up to 15 s) instead of failing;
+if no tab is open, it says so at once.
+
+## How fast
+
+Measured end to end through hoocode (`scripts/e2e-hoocode.mjs`), on one machine:
+
+| What | Time |
+|---|---|
+| `/canvas open` | ~0.3 s |
+| draw.io ready in the browser | ~2 s (~5 s the very first time, while draw.io is unpacked) |
+| Reads and edits (`get_diagram`, `get_changes`, `edit_diagram`, `insert_shapes`, pages, layers) | 0–3 ms |
+| An agent edit appearing in the person's editor | ~0.1–0.3 s |
+| `search_shapes` | ~80 ms |
+| `screenshot`, `.svg` export | ~10–40 ms |
+| `focus`, `layout` (run in the person's draw.io) | ~0.05–0.4 s |
+
+The model is told these classes in the canvas description, and hoocode reports
+the latency it actually observed for each action (`observed_ms`) in
+`list_canvas_capabilities`.
 
 **Changes merge into the live editor.** The agent's edits are applied with
 draw.io's own patch, so the person keeps their selection, scroll position,
@@ -229,6 +255,16 @@ its discovery, `/canvas open`, agent tools and `reload_canvas`:
 ```bash
 HOOCODE_DRAWIO_CANVAS_DIR=$PWD HOOCODE_PLAYWRIGHT=/tmp/pw/node_modules/playwright \
   bunx vitest run --root <hoocode>/packages/coding-agent test/canvas-acceptance-drawio.test.ts
+```
+
+The whole collaboration, through a real hoocode, with a scripted model and the
+person in Chromium — install from this checkout as a plugin, open, draw, react
+to the person's edit, recover from a refused edit, and time every action:
+
+```bash
+HOOCODE_BIN=<hoocode>/packages/coding-agent/bin/hoocode.js \
+DRAWIO_CANVAS_PLAYWRIGHT=/tmp/pw/node_modules/playwright \
+  node scripts/e2e-hoocode.mjs --out /tmp/drawio-e2e   # --out keeps screenshots
 ```
 
 ### Continuous integration

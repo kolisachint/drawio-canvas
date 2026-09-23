@@ -138,6 +138,31 @@ describe("draw.io in the browser", { skip, timeout: 600_000 }, () => {
 		}
 	});
 
+	/**
+	 * "I opened it, what do you see?" is when an agent reaches for a screenshot,
+	 * and it used to land in the seconds draw.io takes to boot and fail with
+	 * no_editor. A tab that is open and loading now holds the request; no tab at
+	 * all still fails at once, so nobody waits on a person who is not there.
+	 */
+	it("holds an editor request while the person's tab is loading, and fails fast with no tab", async () => {
+		const canvas = await openCanvas({ input: { xml: SAMPLE_XML } });
+		const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+		try {
+			const started = Date.now();
+			await assert.rejects(() => canvas.invoke("focus", {}), (error) => error.code === "no_editor");
+			assert.ok(Date.now() - started < 500, "with no tab open, no_editor should be immediate");
+			await page.goto(canvas.url);
+			// The page is up but draw.io has not booted yet: ask straight away.
+			await page.waitForFunction(() => document.readyState !== "loading");
+			assert.equal(await page.evaluate(() => Boolean(window.drawioCanvas)), false);
+			const shot = await canvas.invoke("screenshot", {});
+			assert.match(shot.note, /Rendered by the person's draw\.io/);
+		} finally {
+			await page.close();
+			await canvas.close();
+		}
+	});
+
 	it("tells the agent what the person did, in words", async () => {
 		const s = await session();
 		try {

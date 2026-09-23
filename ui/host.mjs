@@ -643,7 +643,7 @@ function startEditor() {
 	});
 }
 
-function listen() {
+function listen({ onConnected } = {}) {
 	const events = new EventSource(api("api/events?role=editor"));
 	events.addEventListener("change", (event) => void bridge?.onServerChange(JSON.parse(event.data)));
 	events.addEventListener("rpc", (event) => void bridge?.handleRpc(JSON.parse(event.data)));
@@ -651,6 +651,7 @@ function listen() {
 		// A reconnect after the server restarted (a canvas reload) or the laptop
 		// slept: catch up on whatever was missed.
 		const hello = JSON.parse(event.data);
+		onConnected?.();
 		if (bridge && hello.version !== bridge.version) void bridge.onServerChange({ version: hello.version });
 		setStatus(bridge ? `v${hello.version}` : "connected");
 	});
@@ -757,6 +758,17 @@ $("history").addEventListener("click", () => void showHistory());
 
 // ------------------------------------------------------------------ boot
 
+/**
+ * Tell the canvas a person is here and draw.io is on its way.
+ *
+ * The agent's editor requests (screenshot, focus, layout) used to fail with
+ * no_editor for the seconds draw.io takes to start, which is exactly when an
+ * agent reacting to "I opened it" asks for a screenshot. While this stream is
+ * open the server holds such requests instead; it closes once the editor
+ * stream is registered, or with the tab.
+ */
+const loadingStream = new EventSource(api("api/events?role=loading"));
+
 async function boot() {
 	await waitForEditor();
 	$("loading").hidden = true;
@@ -765,15 +777,25 @@ async function boot() {
 	const { ui, win } = await startEditor();
 	persistSettings(win);
 	bridge = new Bridge(win, ui, { xml: lastState.xml, version: lastState.version });
-	window.drawioCanvas = bridge;
 	setStatus(`v${lastState.version}`);
-	listen();
+	// Ready means the server can reach this editor, not just that draw.io drew:
+	// announce it once the editor stream is registered.
+	await new Promise((resolve) =>
+		listen({
+			onConnected: () => {
+				loadingStream.close();
+				window.drawioCanvas = bridge;
+				resolve();
+			},
+		}),
+	);
 	// Catch a version that landed between the state read and the stream opening.
 	const state = await apiJson("api/state");
 	if (state.version !== bridge.version) void bridge.onServerChange({ version: state.version });
 }
 
 boot().catch((cause) => {
+	loadingStream.close();
 	console.error(cause);
 	setStatus(`failed to start: ${cause.message}`, "error");
 });

@@ -49,7 +49,7 @@ before(async () => {
 	page.on("pageerror", (error) => {
 		throw error;
 	});
-	await page.goto(`${canvas.url}lite/`, { waitUntil: "networkidle" });
+	await page.goto(`${canvas.url}lite/`, { waitUntil: "load" });
 	await page.waitForSelector("#status");
 });
 
