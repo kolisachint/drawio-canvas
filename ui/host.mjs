@@ -160,7 +160,12 @@ export class Bridge {
 				const result = await post("api/sync", { changes, source });
 				if (result.errors?.length) {
 					console.warn("drawio-canvas: server refused part of an edit", result.errors);
-					await this.resync("the canvas refused part of an edit");
+					// Say which change and why: "part of an edit" left the person hunting
+					// for what just moved back.
+					const [first] = result.errors;
+					const which = first.cell_id ? `your change to "${first.cell_id}"` : "part of your edit";
+					const more = result.errors.length > 1 ? ` (and ${result.errors.length - 1} more)` : "";
+					await this.resync(`${which}${more} could not be applied — ${first.message}`);
 				}
 			} catch (cause) {
 				setStatus(`could not save an edit: ${cause.message}`, "error");
@@ -341,7 +346,7 @@ export class Bridge {
 	 * disagree, and the server is the authority. The person's last change may be
 	 * lost; the status line says so rather than leaving them wondering.
 	 */
-	async resync(reason) {
+	async resync(reason, { kind = "error" } = {}) {
 		const state = await apiJson("api/state");
 		const ui = this.ui;
 		const next = ui.getPagesForXml(state.xml);
@@ -355,7 +360,19 @@ export class Bridge {
 		this.shadow = ui.clonePages(ui.pages);
 		this.serverXml = state.xml;
 		this.version = state.version;
-		setStatus(`re-synced: ${reason}`, "error");
+		setStatus(kind === "error" ? `re-synced: ${reason}` : reason, kind, { hold: 5000 });
+	}
+
+	/**
+	 * The canvas restarted under this tab — a reload of the extension — and kept
+	 * the tab's URL. Its versions start again, so the usual "is it newer" check
+	 * would ignore it. Send what the person did meanwhile, then take the new
+	 * server's document.
+	 */
+	async adoptRestarted() {
+		this.flush();
+		await this.queue;
+		await this.resync("the canvas restarted; you are on its current version", { kind: "" });
 	}
 
 	/** Flash the cells the agent touched, once, so a change never appears unexplained. */
@@ -657,6 +674,8 @@ function isEmpty(patch) {
 
 let bridge = null;
 let lastState = null;
+/** Which server start this page is talking to (see `adoptRestarted`). */
+let serverEpoch = null;
 
 async function waitForEditor() {
 	for (;;) {
@@ -773,7 +792,10 @@ function listen({ onConnected } = {}) {
 		void apiJson("api/collab")
 			.then(renderCollab)
 			.catch(() => {});
-		if (bridge && hello.version !== bridge.version) void bridge.onServerChange({ version: hello.version });
+		const restarted = serverEpoch !== null && hello.epoch && hello.epoch !== serverEpoch;
+		serverEpoch = hello.epoch ?? serverEpoch;
+		if (bridge && restarted) void bridge.adoptRestarted();
+		else if (bridge && hello.version !== bridge.version) void bridge.onServerChange({ version: hello.version });
 		setStatus(bridge ? `v${hello.version}` : "connected");
 	});
 	events.onerror = () => setStatus("reconnecting…", "error");

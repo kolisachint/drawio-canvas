@@ -8,6 +8,9 @@
  */
 
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { AgentLink } from "../lib/agent.mjs";
 import { openCanvas, SAMPLE_XML } from "./harness.mjs";
@@ -210,6 +213,40 @@ describe("working with the agent in draw.io", { skip }, () => {
 		} finally {
 			await page.close();
 			await canvas.close();
+		}
+	});
+
+	it("keeps the person's tab across a reload: same URL, the document, the asks, and live again", { timeout: 240_000 }, async () => {
+		const workspace = await mkdtemp(path.join(tmpdir(), "drawio-canvas-reload-"));
+		const instanceId = `reload-${Math.random().toString(36).slice(2)}`;
+		const first = await openCanvas({ instanceId, workspace, input: { xml: SAMPLE_XML } });
+		const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+		let second;
+		try {
+			await page.goto(first.url);
+			await page.waitForFunction(() => window.drawioCanvas, null, { timeout: 180_000 });
+			await first.fetch("api/collab", { method: "POST", body: JSON.stringify({ op: "ask", text: "Keep me", page_id: "p1", cell_ids: ["start"] }) });
+			await page.waitForFunction(() => document.querySelectorAll("#asks-list .ask").length === 1);
+
+			// What reload_canvas does: the old process closes the instance, a new one opens it.
+			await first.close();
+			second = await openCanvas({ instanceId, workspace });
+			assert.equal(second.url, first.url, "same port and token");
+
+			await page.waitForFunction(() => document.getElementById("status").textContent.includes("restarted"), null, { timeout: 20_000 });
+			assert.equal(await page.textContent("#asks-list .ask .text"), "#1 Keep me");
+
+			await second.invoke("get_diagram", {});
+			await second.invoke("edit_diagram", {
+				operations: [{ operation: "add", cell_id: "after", new_xml: '<mxCell id="after" value="After reload" vertex="1" parent="1"><mxGeometry x="400" y="40" width="120" height="60" as="geometry"/></mxCell>' }],
+			});
+			const frame = page.frame({ url: /drawio\/index\.html/ });
+			await frame.waitForFunction(() => Boolean(window.drawioCanvasUi.editor.graph.model.getCell("after")), null, { timeout: 10_000 });
+			assert.ok(await frame.evaluate(() => Boolean(window.drawioCanvasUi.editor.graph.model.getCell("start"))), "the document came back");
+		} finally {
+			await page.close();
+			await second?.close();
+			await rm(workspace, { recursive: true, force: true });
 		}
 	});
 });

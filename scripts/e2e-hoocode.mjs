@@ -13,7 +13,13 @@
  *   4. the person adds a shape; the agent is told, and builds on it
  *   5. the person relabels a cell; the agent's blind edit is refused *with the
  *      current cell*, and its very next call builds on the person's label
- *   6. every action runs once, timed host side
+ *   6. the person asks from the canvas (Alt+A, typed, Enter): the idle agent is
+ *      woken with one labelled message, reads the ask with its cells, does it,
+ *      and its reply shows in the person's drawer
+ *   7. the person selects a shape and types "this" in the terminal: the
+ *      selection travels with the message, and the agent edits that shape
+ *   8. reload_canvas keeps the person's tab: same URL, reconnects by itself
+ *   9. every action runs once, timed host side
  *
  * The model sends every `input` JSON-encoded as a string, as Qwen through
  * OpenAI-compatible gateways does, so that path is exercised on every call.
@@ -36,7 +42,8 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const BIN = process.env.HOOCODE_BIN;
+// Resolved here: hoocode is spawned in the test workspace, where a relative path means nothing.
+const BIN = process.env.HOOCODE_BIN && path.resolve(process.env.HOOCODE_BIN);
 const DRIVER = process.env.DRAWIO_CANVAS_PLAYWRIGHT;
 if (!BIN || !DRIVER) {
 	console.error("Set HOOCODE_BIN (hoocode's bin/hoocode.js) and DRAWIO_CANVAS_PLAYWRIGHT (a playwright package directory).");
@@ -79,6 +86,8 @@ const BENCH = [
 	["focus", { cell_ids: ["note"], message: "Here" }],
 	["screenshot", {}],
 	["layout", { layout: "horizontalFlow" }],
+	["tidy", {}],
+	["get_asks", { include_done: true }],
 	["save_file", { path: "e2e.svg" }],
 	["save_file", { path: "e2e.drawio" }],
 ];
@@ -132,6 +141,33 @@ function decide(body) {
 			},
 			() => ({ text: "Kept your label and versioned it." }),
 		],
+		// Woken by the canvas: the person asked from the bar.
+		"[canvas drawio-canvas]": [
+			() => invoke("get_asks", {}),
+			() => {
+				const ask = JSON.parse(results[0]).asks?.[0];
+				const xml = ask?.cells_xml ?? "";
+				const id = ask?.cell_ids?.[0];
+				const labelled = xml.replace(/value="([^"]*)"/, 'value="$1 (asked)"');
+				return invoke("edit_diagram", { operations: [{ operation: "update", cell_id: id, new_xml: labelled }] });
+			},
+			() => invoke("update_ask", { id: 1, status: "done", reply: "Marked the one you picked." }),
+			() => ({ text: "Done what you asked on the canvas." }),
+		],
+		// Typed in the terminal with a canvas selection attached.
+		PILL: [
+			() => {
+				const ids = task.match(/"cell_ids":\[([^\]]*)\]/)?.[1]?.match(/"([^"]+)"/g)?.map((id) => id.slice(1, -1)) ?? [];
+				return invoke("get_diagram", { cell_ids: ids });
+			},
+			() => {
+				const xml = JSON.parse(results[0]).cells_xml ?? "";
+				const id = xml.match(/id="([^"]+)"/)?.[1];
+				return invoke("edit_diagram", { operations: [{ operation: "update", cell_id: id, new_xml: xml.replace(/value="([^"]*)"/, 'value="$1 (this)"') }] });
+			},
+			() => ({ text: "Changed the one you had selected." }),
+		],
+		RELOAD: [() => ({ tool: "reload_canvas", args: { extensionId: "drawio-canvas" } }), () => ({ text: "Reloaded." })],
 		BENCH: [...BENCH.map(([action, input]) => () => invoke(action, input)), () => ({ text: "Ran every action." })],
 	};
 	const script = scripts[Object.keys(scripts).find((key) => task.startsWith(key))] ?? [() => ({ text: "ok" })];
@@ -296,7 +332,41 @@ try {
 	check(label === "Public API v2", `the person's label should survive: got "${label}"`);
 	say(`blind edit refused; retry built on the person's label → "${label}"`);
 
-	// 6. Every action once, timed.
+	// 6. The person asks from the canvas; the idle agent is woken, does it, replies.
+	const frame = () => page.frame({ url: /drawio\/index\.html/ });
+	await graph(`g.setSelectionCell(g.model.getCell("db"));`);
+	await frame().evaluate(() => window.drawioCanvasUi.editor.graph.container.focus());
+	started = Date.now();
+	const woken = until((event) => event.type === "agent_end", "the agent woken by the canvas", 120_000);
+	await page.keyboard.press("Alt+KeyA");
+	await page.keyboard.type("Mark this one");
+	await page.keyboard.press("Enter");
+	await woken;
+	timings.push(["ask from the canvas → agent done (4 model turns)", Date.now() - started]);
+	await page.click("#asks-toggle");
+	await page.waitForFunction(() => document.querySelector("#asks-list .reply")?.textContent.includes("Marked the one you picked"), null, { timeout: 10_000 });
+	const marked = await graph(`return g.model.getCell("db").value;`);
+	check(marked === "Orders DB (asked)", `the ask's cell should be changed: got "${marked}"`);
+	if (keep) await page.screenshot({ path: path.join(work, "3-ask-done.png") });
+	await page.click("#asks-toggle");
+	say("person asked from the canvas; agent woke, did it, replied in the drawer");
+
+	// 7. "this" in the terminal means the canvas selection.
+	await graph(`g.setSelectionCell(g.model.getCell("web"));`);
+	await page.waitForTimeout(800);
+	const pill = await agent("PILL make this stand out");
+	check(pill.every((call) => !call.isError), `pill: ${JSON.stringify(pill.map((call) => call.result?.content?.[0]?.text))}`);
+	const thisLabel = await graph(`return g.model.getCell("web").value;`);
+	check(thisLabel === "Web App (this)", `"this" should be the selected cell: got "${thisLabel}"`);
+	say('typed "this" in the terminal; the agent changed the selected shape');
+
+	// 8. reload_canvas keeps the person's tab.
+	await agent("RELOAD the canvas");
+	await page.waitForFunction(() => document.getElementById("status").textContent.includes("restarted"), null, { timeout: 30_000 });
+	check(page.url().startsWith(url), "the tab stays on the same URL");
+	say("reload_canvas: the person's tab reconnected by itself");
+
+	// 9. Every action once, timed.
 	const starts = new Map();
 	const from = events.length;
 	await agent("BENCH every action");

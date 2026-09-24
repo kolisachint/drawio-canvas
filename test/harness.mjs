@@ -10,8 +10,8 @@
  * protocol: `createCanvas` records a declaration and its handlers, and
  * `CanvasError` carries a code.
  *
- * `test/hoocode.test.mjs` then runs the same canvas through hoocode's real
- * runner, so nothing rests on this stub being right.
+ * `scripts/e2e-hoocode.mjs` then runs the same canvas through a real hoocode,
+ * so nothing rests on this stub being right.
  */
 
 import { mkdtemp, rm } from "node:fs/promises";

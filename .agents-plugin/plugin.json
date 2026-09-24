@@ -1,6 +1,6 @@
 {
 	"name": "drawio-canvas",
-	"version": "0.2.0",
-	"description": "The full draw.io editor (pinned 31.4.6, bundled, offline) that a person and an agent edit at the same time: every shape library, layers, pages for the person; cell edits, library shapes, layouts and screenshots for the agent.",
+	"version": "0.3.0",
+	"description": "The full draw.io editor (pinned 31.4.6, bundled, offline) that a person and an agent edit at the same time: every shape library, layers, pages for the person; cell edits, library shapes, layouts, tidy and screenshots for the agent; asks from the canvas and a quiet agent status for the person.",
 	"author": { "name": "kolisachint" }
 }

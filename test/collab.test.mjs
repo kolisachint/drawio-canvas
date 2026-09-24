@@ -18,9 +18,12 @@ import { openCanvas, SAMPLE_XML } from "./harness.mjs";
 function fakeHost() {
 	const handlers = new Map();
 	const sent = [];
+	const pushed = [];
 	return {
 		sent,
+		pushed,
 		session: {
+			rpc: { extensions: { sendAttachmentsToMessage: async (params) => void pushed.push(params) } },
 			send: async (options) => {
 				sent.push(options);
 				return `m${sent.length}`;
@@ -112,6 +115,31 @@ describe("idle digest", () => {
 
 	it("goes for a single added or removed cell", () => {
 		assert.equal(digestDue({ ...base, unseenChanges: 1, structural: true }), true);
+	});
+});
+
+describe("the selection as context for the person's next message", () => {
+	it("offers what is selected, once per change, and withdraws it when nothing is", async () => {
+		const { host, agent } = linked();
+		const opened = await openCanvas({ agent, input: { xml: SAMPLE_XML } });
+		try {
+			const presence = (selection) => opened.fetch("api/presence", { method: "POST", body: JSON.stringify({ page_id: "p1", page: "Flow", selection }) });
+			await presence(["start", "check"]);
+			await presence(["start", "check"]);
+			await settle();
+			assert.equal(host.pushed.length, 1);
+			const [push] = host.pushed;
+			assert.equal(push.instanceId, opened.instanceId);
+			assert.equal(push.attachments[0].type, "extension_context");
+			assert.equal(push.attachments[0].title, '2 selected on "Flow": Start, Valid?');
+			assert.deepEqual(push.attachments[0].payload.cell_ids, ["start", "check"]);
+			await presence([]);
+			await settle();
+			assert.deepEqual(host.pushed.at(-1).attachments, []);
+			assert.equal(host.sent.length, 0, "a selection never messages the agent");
+		} finally {
+			await opened.close();
+		}
 	});
 });
 

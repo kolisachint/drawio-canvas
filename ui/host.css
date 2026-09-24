@@ -84,7 +84,10 @@ body {
 .peer {
 	overflow: hidden;
 	text-overflow: ellipsis;
-	max-width: 40vw;
+	/* Gives way first: the agent chip and the ask box matter more at a glance. */
+	flex: 0 1 auto;
+	min-width: 0;
+	max-width: 30vw;
 	font-size: 12px;
 }
 
@@ -222,9 +225,10 @@ button.primary {
 
 .agent-chip {
 	display: inline-flex;
+	flex: 0 0 auto;
 	align-items: center;
 	gap: 6px;
-	max-width: 28vw;
+	max-width: 24vw;
 	font-size: 12px;
 	color: var(--muted);
 	overflow: hidden;
@@ -280,6 +284,7 @@ button.quiet:hover {
 }
 
 #ask {
+	flex: 0 0 auto;
 	width: 180px;
 	font: inherit;
 	font-size: 12px;
