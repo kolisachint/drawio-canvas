@@ -52,7 +52,7 @@ describe("as a forked canvas extension", () => {
 	});
 
 	it("imports nothing but node: builtins, the SDK, and its own files", async () => {
-		const sources = ["extension.mjs", "lib/canvas.mjs", "lib/server.mjs", "lib/files.mjs", "lib/session.mjs", "lib/model.mjs", "lib/render.mjs", "lib/style.mjs", "lib/xml.mjs"];
+		const sources = ["extension.mjs", "lib/canvas.mjs", "lib/server.mjs", "lib/files.mjs", "lib/session.mjs", "lib/model.mjs", "lib/render.mjs", "lib/style.mjs", "lib/xml.mjs", "lib/agent.mjs", "lib/asks.mjs", "lib/collab.mjs", "lib/tidy.mjs", "lib/tidy-page.mjs"];
 		for (const relative of sources) {
 			const source = await readFile(path.join(ROOT, relative), "utf8");
 			for (const [, specifier] of source.matchAll(/^\s*import\s[^"']*["']([^"']+)["']/gm)) {
@@ -63,11 +63,11 @@ describe("as a forked canvas extension", () => {
 	});
 
 	it("keeps the shared modules loadable in a browser", async () => {
-		// `lib/model.mjs`, `lib/render.mjs`, `lib/style.mjs` and `lib/xml.mjs` are
-		// served to the page. A `node:` import in one of them would load here and
+		// `lib/model.mjs`, `lib/render.mjs`, `lib/style.mjs`, `lib/xml.mjs` and
+		// `lib/tidy.mjs` are served to the page. A `node:` import in one of them would load here and
 		// fail there, where it would surface as a blank canvas rather than an error
 		// anyone can read.
-		for (const relative of ["lib/model.mjs", "lib/render.mjs", "lib/style.mjs", "lib/xml.mjs"]) {
+		for (const relative of ["lib/model.mjs", "lib/render.mjs", "lib/style.mjs", "lib/xml.mjs", "lib/tidy.mjs"]) {
 			const source = await readFile(path.join(ROOT, relative), "utf8");
 			assert.equal(/^\s*import\s[^"']*["']node:/m.test(source), false, `${relative} imports a node: builtin but is served to the browser`);
 		}
@@ -81,7 +81,7 @@ describe("as a forked canvas extension", () => {
 		assert.equal(ready.canvases[0].displayName, "Draw.io Canvas");
 		assert.deepEqual(
 			ready.canvases[0].actions.map((action) => action.name),
-			["get_diagram", "get_changes", "edit_diagram", "search_shapes", "insert_shapes", "replace_diagram", "manage_pages", "manage_layers", "screenshot", "focus", "layout", "open_file", "save_file"],
+			["get_diagram", "get_changes", "edit_diagram", "search_shapes", "insert_shapes", "replace_diagram", "manage_pages", "manage_layers", "screenshot", "focus", "layout", "tidy", "get_asks", "update_ask", "open_file", "save_file"],
 		);
 		// Nothing declared that the host cannot serve.
 		assert.deepEqual(ready.unsupported, []);

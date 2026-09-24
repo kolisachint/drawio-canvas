@@ -3,7 +3,7 @@
 	"owner": { "name": "kolisachint" },
 	"metadata": {
 		"description": "The full draw.io editor as a hoocode canvas that a person and an agent edit together.",
-		"version": "0.2.0"
+		"version": "0.3.0"
 	},
 	"supportPlatform": ["agents"],
 	"plugins": [

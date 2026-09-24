@@ -13,6 +13,11 @@
 			<span class="status" id="status" aria-live="polite">starting…</span>
 			<span class="spacer"></span>
 			<span class="peer" id="peer" title="What the agent last did"></span>
+			<span class="agent-chip" id="agent" hidden title="What the agent is doing"><i class="dot"></i><span id="agent-hint">idle</span></span>
+			<button class="quiet" id="unseen" hidden title="Send what you changed to the agent for a look"></button>
+			<input id="ask" type="text" autocomplete="off" placeholder="Ask the agent…" title="Enter asks about what you have selected. Ctrl+Enter: do it now. Alt+A jumps here from the diagram." />
+			<button id="tidy" title="Fit labels, line up and un-overlap the selection, or the page — instantly, no agent. Ctrl+Z undoes it.">Tidy</button>
+			<button id="asks-toggle" title="Your asks, and the agent's plan">Asks<span class="count" id="asks-count" hidden></span></button>
 			<button id="open-file" title="Open a .drawio file from the workspace">Open…</button>
 			<button id="save-file" title="Save to the workspace (Ctrl+S)">Save</button>
 			<button id="history" title="Every version, by you or the agent">History</button>
@@ -25,6 +30,21 @@
 				<p class="muted" id="loading-hint"></p>
 			</section>
 			<iframe id="editor" title="draw.io editor" hidden></iframe>
+			<aside id="drawer" hidden aria-label="Asks and the agent's plan">
+				<section>
+					<h3>Your asks</h3>
+					<ol id="asks-list"></ol>
+					<p class="muted" id="asks-empty">Select shapes, type in <em>Ask the agent…</em> and press Enter. The agent takes them top first; ↑ moves one to the top.</p>
+				</section>
+				<section id="plan" hidden>
+					<h3>The agent's plan</h3>
+					<ol id="plan-list"></ol>
+				</section>
+				<footer>
+					<label title="Once per pause: when the agent has been idle for a minute and you stop editing, it gets a short list of what you changed, and acts only if something looks broken."><input type="checkbox" id="digest" /> Nudge the agent when I pause</label>
+					<p class="muted" id="delivery-note"></p>
+				</footer>
+			</aside>
 		</main>
 		<div class="sheet" id="sheet" hidden>
 			<div class="sheet-body" role="dialog" aria-modal="true" aria-labelledby="sheet-title">

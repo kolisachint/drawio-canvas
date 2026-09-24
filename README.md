@@ -7,9 +7,12 @@ The person gets draw.io itself in their browser — the same editor as the
 desktop app: every shape library (AWS, Azure, GCP, Kubernetes, Cisco, IBM, SAP,
 UML, BPMN, …), layers, pages, the format panel, find, layouts, export. The agent
 gets actions against the same document: read it, edit cells, insert library
-icons by name, lay it out, take screenshots rendered by draw.io, and find out
-what the person changed while it was busy. Neither waits for the other, and
-neither silently overwrites the other.
+icons by name, lay it out, tidy it, take screenshots rendered by draw.io, and
+find out what the person changed while it was busy. Neither waits for the other,
+and neither silently overwrites the other.
+
+The person can also ask the agent for things from the canvas, see quietly
+whether it is busy and on what, and fix small things instantly without it.
 
 ```
 /canvas open drawio-canvas
@@ -80,7 +83,7 @@ node scripts/install-drawio.mjs
 
 | | Supported |
 |---|---|
-| **hoocode** | **0.5.81 or newer.** 0.5.81 is the first release that tells a canvas its working directory; on older releases the canvas opens, but **Open…** / **Save** and the `open_file` / `save_file` / `screenshot` actions need `DRAWIO_CANVAS_WORKSPACE` set. |
+| **hoocode** | **0.5.81 or newer.** 0.5.81 is the first release that tells a canvas its working directory; on older releases the canvas opens, but **Open…** / **Save** and the `open_file` / `save_file` / `screenshot` actions need `DRAWIO_CANVAS_WORKSPACE` set. Asks that wake the agent, the agent status chip, the idle digest and the selection pill need a release after 0.5.87 (canvas `session.send`, `session.on` and `sendAttachmentsToMessage`); on an older one the canvas works as before and asks wait for the agent's next canvas call. |
 | **Node.js** | **20.6 or newer** on `PATH` (hoocode forks canvases with Node, also when hoocode itself is the standalone binary). No npm install, no build, no dependencies. |
 | **OS** | macOS, Linux and Windows 10/11. Nothing is native; the only platform difference is the cache directory below. |
 | **Browser** | Any current browser draw.io supports (Chrome, Edge, Firefox, Safari). The page is served on `127.0.0.1`; the end-to-end tests run in Chromium. |
@@ -106,11 +109,27 @@ On first open the bundled archive is verified and unpacked into the cache
 ### The person, in draw.io
 
 Everything draw.io does. The canvas adds a slim bar above it: the file, the
-version, what the agent last did (its edits also flash in the editor), and
-**Open…**, **Save** (also `Ctrl/Cmd+S`) and **History** — every version by
-either side, with a restore. Undo (`Ctrl/Cmd+Z`) undoes the person's own edits,
-never the agent's. Preferences — enabled libraries, theme, units — are kept
-between canvases, as the desktop app keeps them.
+version, what the agent last did (its edits also flash in the editor), and:
+
+- **The agent chip** — a dim dot and "idle", or a pulsing dot and what the agent
+  is on (`#2 · canvas: edit_diagram`). Nothing pops up.
+- **Ask the agent…** — type and press Enter to ask about what you have selected;
+  `Ctrl/Cmd+Enter` interrupts the agent with it. `Alt+A` jumps here from the
+  diagram, and right-click → *Ask the agent about this…* does too.
+- **N edits since the agent looked** — one click asks it to review them.
+- **Tidy** — fits shapes to their labels, lines up near-aligned ones, pushes
+  overlapping ones apart and straightens edges, on the selection or the page.
+  Instant, no agent, one `Ctrl/Cmd+Z` to undo. Also on the right-click menu.
+- **Asks** — your requests, top first, with their status and the agent's
+  one-line reply; move one to the top, interrupt with it, or withdraw it. The
+  agent's own plan is listed underneath. Cells with an open ask carry a small
+  numbered badge.
+- **Open…**, **Save** (also `Ctrl/Cmd+S`) and **History** — every version by
+  either side, with a restore.
+
+Undo (`Ctrl/Cmd+Z`) undoes the person's own edits, never the agent's.
+Preferences — enabled libraries, theme, units — are kept between canvases, as
+the desktop app keeps them.
 
 ### The agent, through actions
 
@@ -127,10 +146,14 @@ between canvases, as the desktop app keeps them.
 | `screenshot` | A PNG rendered by the person's draw.io (page, viewport, selection or cells), written into the workspace for the agent to read. |
 | `focus` | Switch the person's view to a page and cells, with a one-line message. |
 | `layout` | Run a draw.io layout (`verticalFlow`, `horizontalTree`, `organic`, or layout JSON) in the person's editor. |
+| `tidy` | Fit shapes to labels, snap, align, separate overlaps and drop stale bends — deterministic, so the agent never places shapes by hand. `cell_ids` limits what moves. |
+| `get_asks` | The person's requests, top first, each with its cells' current XML (counted as read, so the agent can edit them at once). |
+| `update_ask` | Mark an ask `working`, `done` or `declined`, with a one-line reply the person reads in the canvas. |
 | `open_file` / `save_file` | `.drawio`/`.xml`; `.svg` and `.png` rendered by draw.io (the SVG embeds the diagram so it reopens). |
 
 Every result also carries `person`: changes the agent has not been told about
-yet, and what the person has selected and in view. The same picture is kept on
+yet, what the person has selected and in view, and any asks it has not seen
+(`new_asks`). The same picture is kept on
 disk as `.drawio-canvas/<instance>/manifest.json` in the workspace (git-ignored
 by its own `.gitignore`) for tools that read files.
 
@@ -168,6 +191,36 @@ identical.
 
 ---
 
+## Working with the agent
+
+**The canvas speaks only when the person asks.** Editing never wakes the agent:
+a diagram is edited continuously, and a model turn per burst of clicks would
+bury it in noise. What does reach it:
+
+| The person… | The agent gets |
+|---|---|
+| asks, while the agent is **idle** | one message at once, labelled `[canvas drawio-canvas]`, listing the open asks; a turn starts |
+| asks, while the agent is **busy** | nothing extra now: its next canvas call carries the ask (`new_asks`), so it can pick it up between steps. What is still open when it goes idle is sent then, as one message, so an ask it already handled never starts a second turn |
+| presses `Ctrl/Cmd+Enter` or **Now** | the ask at once, steering the turn in progress |
+| clicks **N edits since the agent looked** | one review ask, anchored to the cells they changed |
+| pauses, with **Nudge the agent when I pause** on | at most once per idle stretch, and only after the agent has been idle a minute and the person stopped editing for 20 s: a short list of what they changed, with "act only if something is clearly broken" |
+| types in the **terminal** with shapes selected | their message, with the selection attached (hoocode shows it as a pill above the prompt first), so "this" means those shapes |
+
+hoocode adds its own limits on top — a canvas's waiting message is replaced by
+its newer one, steering is rate-limited, and a canvas cannot start more than
+three turns before the person says something (see hoocode's `docs/canvas.md`).
+
+**Quick answers.** An ask anchored to shapes hands the agent those shapes' XML,
+so it can answer in one edit instead of read, think, edit. The agent marks an
+ask `working` as soon as it edits its cells, and its reply shows in the drawer.
+For layout chores, **Tidy** needs no agent at all.
+
+**Reloads keep the tab.** `reload_canvas` restarts the extension; the canvas
+keeps its port and token, the page's event stream reconnects by itself, catches
+up, and the asks are still there.
+
+---
+
 ## How fast
 
 Measured with the person's draw.io open in Chromium (`scripts/e2e-hoocode.mjs`
@@ -185,6 +238,8 @@ and `test/drawio.test.mjs`), on one machine:
 | `.svg` export | 12 ms | 13 ms |
 | `focus` | 18 ms | ~0.4 s right after another selection change |
 | `layout` (animated for the person) | ~0.2 s | ~0.26 s |
+| `tidy` | ~20 ms | |
+| An ask from the canvas → the agent's turn starts | one model turn; the message is sent at once | |
 | A refused call (bad input, unknown layout, …) | <1 ms | |
 
 The model is told these classes in the canvas description, and hoocode reports
@@ -222,6 +277,11 @@ assets/              drawio-31.4.6.war — the pinned draw.io release
 data/                shapes-31.4.6.json.gz — every library shape, for search_shapes
 lib/
   canvas.mjs         the canvas declaration and the actions
+  agent.mjs          the agent as the host reports it (session.on) and how to reach it (session.send)
+  asks.mjs           the person's asks, and when the canvas speaks (the idle digest)
+  collab.mjs         one instance's asks, delivery, digest and selection pill
+  tidy.mjs           fit, snap, align, un-overlap: pure, shared with the page
+  tidy-page.mjs      tidy on the document, for the agent's action
   session.mjs        one document: versions, journal, the per-cell gate
   sync.mjs           the person's draw.io edits applied to the document
   changes.mjs        document diffs, said in words
@@ -256,23 +316,23 @@ DRAWIO_CANVAS_PLAYWRIGHT=/tmp/pw/node_modules/playwright node --test "test/*.tes
 ```
 
 `test/drawio.test.mjs` runs the real draw.io in Chromium with the agent editing
-underneath it. hoocode carries an acceptance test that runs this canvas through
-its discovery, `/canvas open`, agent tools and `reload_canvas`:
-
-```bash
-HOOCODE_DRAWIO_CANVAS_DIR=$PWD HOOCODE_PLAYWRIGHT=/tmp/pw/node_modules/playwright \
-  bunx vitest run --root <hoocode>/packages/coding-agent test/canvas-acceptance-drawio.test.ts
-```
+underneath it; `test/collab-browser.test.mjs` does the same for asks, the chip,
+Tidy, the right-click items, badges and a reload.
 
 The whole collaboration, through a real hoocode, with a scripted model and the
 person in Chromium — install from this checkout as a plugin, open, draw, react
-to the person's edit, recover from a refused edit, and time every action:
+to the person's edit, recover from a refused edit, an ask from the canvas that
+wakes the agent, "this" typed in the terminal, `reload_canvas` keeping the tab,
+and every action timed:
 
 ```bash
 HOOCODE_BIN=<hoocode>/packages/coding-agent/bin/hoocode.js \
 DRAWIO_CANVAS_PLAYWRIGHT=/tmp/pw/node_modules/playwright \
   node scripts/e2e-hoocode.mjs --out /tmp/drawio-e2e   # --out keeps screenshots
 ```
+
+Against a hoocode checkout that is not built, use
+`HOOCODE_DIR=<hoocode> HOOCODE_BIN=scripts/hoocode-from-source.mjs`.
 
 ### Continuous integration
 

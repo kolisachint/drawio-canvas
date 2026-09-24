@@ -23,6 +23,7 @@
 import { CanvasError, createCanvas, joinSession } from "@github/copilot-sdk/extension";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { AgentLink } from "./lib/agent.mjs";
 import { createDrawioCanvas } from "./lib/canvas.mjs";
 
 /**
@@ -34,14 +35,23 @@ import { createDrawioCanvas } from "./lib/canvas.mjs";
  */
 let logLine = () => {};
 
+/**
+ * The agent as the host reports it (`session.on`), and the way to ask it for
+ * something (`session.send`). Attached once the session exists; a host without
+ * either leaves it inert and the canvas works as before.
+ */
+const agent = new AgentLink();
+
 const canvas = createDrawioCanvas(
 	{ createCanvas, CanvasError },
 	{
 		extensionDir: path.dirname(fileURLToPath(import.meta.url)),
 		log: (message) => logLine(message),
+		agent,
 	},
 );
 
 const session = await joinSession({ canvases: [canvas] });
 logLine = (message) => void session.log(message);
+agent.attach(session);
 await session.log("drawio-canvas ready");

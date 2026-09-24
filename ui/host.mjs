@@ -24,7 +24,16 @@
  * view and running draw.io's layouts are done here, in the real editor, on the
  * server's request (`rpc` events), because only the real editor draws AWS
  * icons, stencils and HTML labels the way draw.io does.
+ *
+ * **Working with the agent.** The bar says, quietly, whether the agent is busy
+ * and on what; the person asks it for things from here (anchored to what they
+ * have selected) and keeps a short list of asks in the drawer. None of it is
+ * inside draw.io: it is this page's own chrome, so a draw.io upgrade cannot
+ * break it. Nothing is sent to the agent unless the person asks (see
+ * `lib/collab.mjs`).
  */
+
+import { describeTidy, tidy } from "../lib/tidy.mjs";
 
 const api = (route) => new URL(route, document.baseURI);
 const $ = (id) => document.getElementById(id);
@@ -61,7 +70,17 @@ async function apiJson(route, options = {}) {
 
 const post = (route, body) => apiJson(route, { method: "POST", body: JSON.stringify(body) });
 
-function setStatus(text, kind = "") {
+/** Until when a message the person should read holds the status line. */
+let statusHeldUntil = 0;
+
+/**
+ * Say something in the status line. `hold` keeps it for that many ms against
+ * routine updates ("v3 saved"), which otherwise replace a result the person
+ * just asked for before they can read it. Errors always get through.
+ */
+function setStatus(text, kind = "", { hold = 0 } = {}) {
+	if (Date.now() < statusHeldUntil && kind !== "error" && hold === 0) return;
+	statusHeldUntil = hold > 0 ? Date.now() + hold : 0;
 	const status = $("status");
 	status.textContent = text;
 	status.className = `status ${kind}`;
@@ -141,7 +160,12 @@ export class Bridge {
 				const result = await post("api/sync", { changes, source });
 				if (result.errors?.length) {
 					console.warn("drawio-canvas: server refused part of an edit", result.errors);
-					await this.resync("the canvas refused part of an edit");
+					// Say which change and why: "part of an edit" left the person hunting
+					// for what just moved back.
+					const [first] = result.errors;
+					const which = first.cell_id ? `your change to "${first.cell_id}"` : "part of your edit";
+					const more = result.errors.length > 1 ? ` (and ${result.errors.length - 1} more)` : "";
+					await this.resync(`${which}${more} could not be applied — ${first.message}`);
 				}
 			} catch (cause) {
 				setStatus(`could not save an edit: ${cause.message}`, "error");
@@ -302,6 +326,7 @@ export class Bridge {
 		this.serverXml = state.xml;
 		this.version = state.version;
 		this.reconcile(state.xml);
+		if (collabState) this.showAskBadges(collabState.asks);
 		setFile(state.filePath);
 		if (event.source === "agent") {
 			this.highlight(event.touched ?? []);
@@ -321,7 +346,7 @@ export class Bridge {
 	 * disagree, and the server is the authority. The person's last change may be
 	 * lost; the status line says so rather than leaving them wondering.
 	 */
-	async resync(reason) {
+	async resync(reason, { kind = "error" } = {}) {
 		const state = await apiJson("api/state");
 		const ui = this.ui;
 		const next = ui.getPagesForXml(state.xml);
@@ -335,7 +360,19 @@ export class Bridge {
 		this.shadow = ui.clonePages(ui.pages);
 		this.serverXml = state.xml;
 		this.version = state.version;
-		setStatus(`re-synced: ${reason}`, "error");
+		setStatus(kind === "error" ? `re-synced: ${reason}` : reason, kind, { hold: 5000 });
+	}
+
+	/**
+	 * The canvas restarted under this tab — a reload of the extension — and kept
+	 * the tab's URL. Its versions start again, so the usual "is it newer" check
+	 * would ignore it. Send what the person did meanwhile, then take the new
+	 * server's document.
+	 */
+	async adoptRestarted() {
+		this.flush();
+		await this.queue;
+		await this.resync("the canvas restarted; you are on its current version", { kind: "" });
 	}
 
 	/** Flash the cells the agent touched, once, so a change never appears unexplained. */
@@ -530,6 +567,89 @@ export class Bridge {
 		});
 	}
 
+	// ------------------------------------------------------- the person's tools
+
+	/**
+	 * Tidy the selection, or the page when nothing is selected, as the person's
+	 * own edit: one undo step, synced like any other. Labels are measured by
+	 * draw.io, which the server cannot do.
+	 */
+	tidy() {
+		const graph = this.ui.editor.graph;
+		const model = graph.model;
+		const shapes = [];
+		const edges = [];
+		const cells = Object.values(model.cells ?? {});
+		for (const cell of cells) {
+			const geometry = model.getGeometry(cell);
+			if (model.isVertex(cell) && geometry && !geometry.relative && geometry.width > 0 && geometry.height > 0 && cell.parent) {
+				const label = graph.convertValueToString(cell) ?? "";
+				let preferred;
+				if (label.trim()) {
+					const size = graph.getPreferredSizeForCell(cell);
+					// Past this width draw.io would wrap; let tidy estimate instead.
+					if (size && size.width <= 320) preferred = { width: size.width, height: size.height };
+				}
+				shapes.push({ id: cell.id, parent: cell.parent.id, x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height, label, style: cell.style ?? "", preferred });
+			} else if (model.isEdge(cell)) {
+				edges.push({ id: cell.id, source: cell.source?.id, target: cell.target?.id, points: geometry?.points?.length ?? 0 });
+			}
+		}
+		const selected = graph.getSelectionCells().filter((cell) => model.isVertex(cell)).map((cell) => cell.id);
+		const result = tidy(shapes, edges, { scope: selected, grid: graph.gridSize || 10 });
+		if (result.changes.length === 0 && result.clearPoints.length === 0) return result.summary;
+		model.beginUpdate();
+		try {
+			for (const change of result.changes) {
+				const cell = model.getCell(change.id);
+				const geometry = model.getGeometry(cell)?.clone();
+				if (!geometry) continue;
+				Object.assign(geometry, { x: change.x, y: change.y, width: change.width, height: change.height });
+				model.setGeometry(cell, geometry);
+			}
+			for (const id of result.clearPoints) {
+				const cell = model.getCell(id);
+				const geometry = model.getGeometry(cell)?.clone();
+				if (!geometry) continue;
+				geometry.points = null;
+				model.setGeometry(cell, geometry);
+			}
+		} finally {
+			model.endUpdate();
+		}
+		return result.summary;
+	}
+
+	/**
+	 * Numbered badges on the cells the person's open asks are about, drawn with
+	 * draw.io's own cell overlays — no change to draw.io, and gone with the ask.
+	 */
+	showAskBadges(asks) {
+		const win = this.win;
+		const graph = this.ui.editor.graph;
+		for (const { cell, overlay } of this.badges ?? []) graph.removeCellOverlay(cell, overlay);
+		this.badges = [];
+		if (typeof win.mxCellOverlay !== "function") return;
+		const pageId = this.ui.currentPage?.getId();
+		for (const ask of asks) {
+			if ((ask.status !== "open" && ask.status !== "working") || (ask.page_id && ask.page_id !== pageId)) continue;
+			const colour = ask.status === "working" ? "#8250df" : "#656d76";
+			const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"><circle cx="9" cy="9" r="8" fill="${ask.status === "working" ? colour : "#fff"}" stroke="${colour}" stroke-width="1.5"/><text x="9" y="12.5" font-size="10" font-family="sans-serif" text-anchor="middle" fill="${ask.status === "working" ? "#fff" : colour}">${ask.id}</text></svg>`;
+			const image = new win.mxImage(`data:image/svg+xml,${encodeURIComponent(svg)}`, 18, 18);
+			for (const id of ask.cell_ids) {
+				const cell = graph.model.getCell(id);
+				if (!cell) continue;
+				const overlay = new win.mxCellOverlay(image, `Ask #${ask.id} (${ask.status}): ${ask.text}`, win.mxConstants.ALIGN_RIGHT, win.mxConstants.ALIGN_TOP);
+				overlay.cursor = "pointer";
+				overlay.addListener(win.mxEvent.CLICK, () => {
+					$("drawer").hidden = false;
+				});
+				graph.addCellOverlay(cell, overlay);
+				this.badges.push({ cell, overlay });
+			}
+		}
+	}
+
 	async handleRpc({ id, method, params }) {
 		try {
 			let result;
@@ -554,6 +674,8 @@ function isEmpty(patch) {
 
 let bridge = null;
 let lastState = null;
+/** Which server start this page is talking to (see `adoptRestarted`). */
+let serverEpoch = null;
 
 async function waitForEditor() {
 	for (;;) {
@@ -661,12 +783,19 @@ function listen({ onConnected } = {}) {
 	const events = new EventSource(api("api/events?role=editor"));
 	events.addEventListener("change", (event) => void bridge?.onServerChange(JSON.parse(event.data)));
 	events.addEventListener("rpc", (event) => void bridge?.handleRpc(JSON.parse(event.data)));
+	events.addEventListener("collab", (event) => renderCollab(JSON.parse(event.data)));
 	events.addEventListener("hello", (event) => {
 		// A reconnect after the server restarted (a canvas reload) or the laptop
 		// slept: catch up on whatever was missed.
 		const hello = JSON.parse(event.data);
 		onConnected?.();
-		if (bridge && hello.version !== bridge.version) void bridge.onServerChange({ version: hello.version });
+		void apiJson("api/collab")
+			.then(renderCollab)
+			.catch(() => {});
+		const restarted = serverEpoch !== null && hello.epoch && hello.epoch !== serverEpoch;
+		serverEpoch = hello.epoch ?? serverEpoch;
+		if (bridge && restarted) void bridge.adoptRestarted();
+		else if (bridge && hello.version !== bridge.version) void bridge.onServerChange({ version: hello.version });
 		setStatus(bridge ? `v${hello.version}` : "connected");
 	});
 	events.onerror = () => setStatus("reconnecting…", "error");
@@ -770,6 +899,202 @@ $("save-file").addEventListener("click", () => void saveToWorkspace());
 $("open-file").addEventListener("click", () => void openFromWorkspace());
 $("history").addEventListener("click", () => void showHistory());
 
+// ------------------------------------------------------ working with the agent
+
+let collabState = null;
+
+/** What the person has selected, to anchor an ask to. */
+function selectionAnchor() {
+	const ui = bridge?.ui;
+	if (!ui) return {};
+	return { page_id: ui.currentPage?.getId() ?? null, cell_ids: ui.editor.graph.getSelectionCells().map((cell) => cell.id) };
+}
+
+async function collab(body) {
+	try {
+		const result = await post("api/collab", body);
+		if (result.state) renderCollab(result.state);
+		return result;
+	} catch (cause) {
+		setStatus(cause.message, "error");
+		return null;
+	}
+}
+
+/** What an ask's status looks like to the person. */
+function askLabel(ask, delivery) {
+	if (ask.status !== "open") return ask.status;
+	if (ask.seen) return "seen";
+	if (ask.sent) return "sent";
+	return delivery === "send" ? "queued" : "waiting";
+}
+
+function renderCollab(state) {
+	if (!state || state.unavailable) return;
+	collabState = state;
+	const { agent } = state;
+
+	// The chip: nothing to show until the host says anything about the agent.
+	const chip = $("agent");
+	chip.hidden = !(agent.known || agent.can_send);
+	chip.classList.toggle("busy", agent.busy);
+	const recentDigest = state.digest.sent_at && Date.now() - state.digest.sent_at < 60_000;
+	$("agent-hint").textContent = agent.busy ? agent.hint || "working" : recentDigest ? "idle · sent your edits for a look" : "idle";
+	chip.title = agent.busy ? `The agent is working: ${agent.hint || "…"}` : "The agent is idle";
+
+	const unseen = $("unseen");
+	unseen.hidden = !(state.unseen > 0 && state.delivery === "send");
+	unseen.textContent = `${state.unseen} edit${state.unseen === 1 ? "" : "s"} since the agent looked`;
+
+	const active = state.asks.filter((ask) => ask.status === "open" || ask.status === "working");
+	$("asks-count").hidden = active.length === 0;
+	$("asks-count").textContent = String(active.length);
+
+	const list = $("asks-list");
+	list.replaceChildren(...state.asks.map((ask) => askRow(ask, state.delivery)));
+	$("asks-empty").hidden = state.asks.length > 0;
+
+	$("plan").hidden = agent.todos.length === 0;
+	$("plan-list").replaceChildren(
+		...agent.todos.map((todo) => {
+			const item = document.createElement("li");
+			item.className = `plan-item ${todo.status}`;
+			item.textContent = todo.title;
+			return item;
+		}),
+	);
+
+	bridge?.showAskBadges(state.asks);
+
+	const digest = $("digest");
+	digest.checked = state.digest.enabled;
+	digest.disabled = !state.digest.available;
+	$("delivery-note").textContent =
+		state.delivery === "send"
+			? ""
+			: "This host cannot wake the agent: asks wait until its next action on this canvas. Mention them in the terminal to get it going.";
+}
+
+function askRow(ask, delivery) {
+	const row = document.createElement("li");
+	const finished = ask.status !== "open" && ask.status !== "working";
+	row.className = `ask${finished ? " finished" : ""}`;
+	const pill = document.createElement("span");
+	pill.className = `pill ${ask.status}`;
+	pill.textContent = askLabel(ask, delivery);
+	const text = document.createElement("span");
+	text.className = "text";
+	text.textContent = `#${ask.id} ${ask.text}`;
+	text.title = ask.cell_ids.length ? `Show ${ask.cell_ids.length} cell(s)` : "";
+	text.onclick = () => {
+		if (ask.cell_ids.length && bridge) bridge.focus({ page_id: ask.page_id, cell_ids: ask.cell_ids });
+	};
+	const tools = document.createElement("span");
+	tools.className = "tools";
+	if (!finished) {
+		const tool = (label, title, body) => {
+			const button = document.createElement("button");
+			button.textContent = label;
+			button.title = title;
+			button.onclick = () => void collab(body);
+			tools.append(button);
+		};
+		tool("↑", "Move to the top", { op: "reorder", ids: [ask.id] });
+		tool("Now", "Interrupt the agent with this", { op: "now", id: ask.id });
+		tool("×", "Withdraw this ask", { op: "update", id: ask.id, status: "dismissed" });
+	}
+	row.append(pill, text, tools);
+	if (ask.reply) {
+		const reply = document.createElement("span");
+		reply.className = "reply";
+		reply.textContent = ask.reply;
+		row.append(reply);
+	}
+	return row;
+}
+
+async function submitAsk(now) {
+	const input = $("ask");
+	const text = input.value.trim();
+	if (!text) return;
+	input.value = "";
+	const result = await collab({ op: "ask", text, now, ...selectionAnchor() });
+	if (result?.ask) {
+		const where = result.ask.cell_ids.length ? ` about ${result.ask.cell_ids.length} shape(s)` : "";
+		setStatus(`asked #${result.ask.id}${where}`, "", { hold: 3000 });
+	}
+}
+
+$("ask").addEventListener("keydown", (event) => {
+	if (event.key === "Enter") {
+		event.preventDefault();
+		void submitAsk(event.ctrlKey || event.metaKey);
+	} else if (event.key === "Escape") {
+		$("ask").value = "";
+		$("ask").blur();
+		$("editor").contentWindow?.focus();
+	}
+});
+$("asks-toggle").addEventListener("click", () => {
+	$("drawer").hidden = !$("drawer").hidden;
+});
+$("unseen").addEventListener("click", () => void collab({ op: "review" }));
+$("tidy").addEventListener("click", () => runTidy());
+
+/** Tidy now, here, without the agent: fit, align, un-overlap. Ctrl+Z undoes it. */
+function runTidy() {
+	if (!bridge) return;
+	const scope = bridge.ui.editor.graph.getSelectionCount() > 0 ? "selection" : "page";
+	setStatus(`tidied the ${scope}: ${describeTidy(bridge.tidy())}`, "", { hold: 4000 });
+}
+
+/**
+ * Two items at the end of draw.io's right-click menu, through the extension
+ * point draw.io's own plugins use. If a draw.io release renames it, the items
+ * are simply missing; the bar's buttons still work.
+ */
+function extendContextMenu(ui) {
+	const menus = ui.menus;
+	if (typeof menus?.createPopupMenu !== "function") return;
+	const original = menus.createPopupMenu;
+	menus.createPopupMenu = function (menu, ...rest) {
+		original.call(this, menu, ...rest);
+		try {
+			menu.addSeparator();
+			menu.addItem("Ask the agent about this…", null, () => $("ask").focus());
+			menu.addItem("Tidy", null, () => runTidy());
+		} catch {
+			// Not worth breaking the person's menu over.
+		}
+	};
+}
+$("digest").addEventListener("change", (event) => void collab({ op: "digest", enabled: event.target.checked }));
+
+/**
+ * Alt+A jumps to the ask box, from this page or from inside draw.io (same
+ * origin, so its document can be listened to without touching its code). Not
+ * while a label or any text field is being edited: there Alt+A is the person's
+ * to type.
+ */
+function bindAskKey(win) {
+	const onKey = (event) => {
+		if (!event.altKey || event.ctrlKey || event.metaKey || event.code !== "KeyA") return;
+		if (bridge?.ui.editor.graph.isEditing()) return;
+		// In any text field (draw.io's shape search, the format panel, the Open
+		// sheet) Alt+A is a character the person is typing, e.g. "å" on a Mac.
+		// draw.io's hidden typing shim is not one: it holds focus whenever shapes
+		// are selected, which is exactly when the shortcut matters.
+		const target = event.target;
+		const typingShim = target?.classList?.contains("mxTypingShim");
+		if (!typingShim && (target?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target?.tagName ?? ""))) return;
+		event.preventDefault();
+		event.stopPropagation();
+		$("ask").focus();
+	};
+	window.addEventListener("keydown", onKey, true);
+	win?.document.addEventListener("keydown", onKey, true);
+}
+
 // ------------------------------------------------------------------ boot
 
 /**
@@ -791,6 +1116,9 @@ async function boot() {
 	const { ui, win } = await startEditor();
 	persistSettings(win);
 	bridge = new Bridge(win, ui, { xml: lastState.xml, version: lastState.version });
+	bindAskKey(win);
+	extendContextMenu(ui);
+	ui.editor.addListener("pageSelected", () => collabState && bridge.showAskBadges(collabState.asks));
 	setStatus(`v${lastState.version}`);
 	// Ready means the server can reach this editor, not just that draw.io drew:
 	// announce it once the editor stream is registered.

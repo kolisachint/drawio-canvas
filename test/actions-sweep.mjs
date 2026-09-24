@@ -46,6 +46,7 @@ export const KNOWN_CODES = new Set([
 	"file_unreadable",
 	"stale_diagram",
 	"invalid_parent",
+	"unknown_ask",
 ]);
 
 const cell = (id, label = id, x = 40, y = 40) =>
@@ -147,6 +148,9 @@ export function specificCases() {
 			{ path: "/etc/absolute.drawio" },
 			{ path: "" },
 		],
+		tidy: [{}, { cell_ids: ["s1"] }, { cell_ids: ["ghost"] }, { steps: { fit: false, snap: false } }, { steps: { nope: true } }, { page_name: "Nope" }],
+		get_asks: [{}, { include_done: true }],
+		update_ask: [{ id: 1, status: "working" }, { id: 1, status: "done", reply: "x".repeat(2000) }, { id: 99, status: "done" }, { id: 1, status: "open" }, { id: 1 }],
 		open_file: [{ path: "out/diagram.drawio" }, { path: "missing.drawio" }, { path: "../../etc/passwd" }, { path: "out" }, { path: "notes.txt" }, { path: "" }],
 	};
 }

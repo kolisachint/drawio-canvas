@@ -84,7 +84,10 @@ body {
 .peer {
 	overflow: hidden;
 	text-overflow: ellipsis;
-	max-width: 40vw;
+	/* Gives way first: the agent chip and the ask box matter more at a glance. */
+	flex: 0 1 auto;
+	min-width: 0;
+	max-width: 30vw;
 	font-size: 12px;
 }
 
@@ -216,4 +219,220 @@ button.primary {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+/* ------------------------------------------------ working with the agent */
+
+.agent-chip {
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: 6px;
+	max-width: 24vw;
+	font-size: 12px;
+	color: var(--muted);
+	overflow: hidden;
+}
+
+.agent-chip[hidden] {
+	display: none;
+}
+
+.agent-chip #agent-hint {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.agent-chip .dot {
+	flex: none;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--line);
+}
+
+.agent-chip.busy {
+	color: var(--agent);
+}
+
+.agent-chip.busy .dot {
+	background: var(--agent);
+	animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+	50% {
+		opacity: 0.25;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.agent-chip.busy .dot {
+		animation: none;
+	}
+}
+
+button.quiet {
+	border-color: transparent;
+	color: var(--muted);
+	font-size: 12px;
+	padding: 3px 6px;
+}
+
+button.quiet:hover {
+	color: var(--ink);
+}
+
+#ask {
+	flex: 0 0 auto;
+	width: 180px;
+	font: inherit;
+	font-size: 12px;
+	padding: 3px 8px;
+	border-radius: 6px;
+	border: 1px solid var(--line);
+	background: var(--bg);
+	color: var(--ink);
+	transition: width 0.15s;
+}
+
+#ask:focus {
+	width: 320px;
+	outline: none;
+	border-color: var(--agent);
+}
+
+.count {
+	display: inline-block;
+	min-width: 16px;
+	margin-left: 5px;
+	padding: 0 4px;
+	border-radius: 8px;
+	background: var(--agent);
+	color: #fff;
+	font-size: 11px;
+	text-align: center;
+}
+
+.count[hidden] {
+	display: none;
+}
+
+#drawer {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	width: min(320px, 90vw);
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	padding: 12px;
+	background: var(--panel);
+	border-left: 1px solid var(--line);
+	box-shadow: -4px 0 12px rgb(0 0 0 / 8%);
+	overflow: auto;
+	z-index: 5;
+}
+
+#drawer[hidden] {
+	display: none;
+}
+
+#drawer h3 {
+	margin: 0 0 6px;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--muted);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+#drawer ol {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+#drawer footer {
+	margin-top: auto;
+	font-size: 12px;
+}
+
+#drawer footer p {
+	margin: 4px 0 0;
+}
+
+.ask {
+	display: grid;
+	grid-template-columns: auto 1fr auto;
+	gap: 4px 8px;
+	align-items: start;
+	padding: 6px 8px;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+}
+
+.ask.finished {
+	opacity: 0.6;
+}
+
+.ask .text {
+	cursor: pointer;
+	overflow-wrap: anywhere;
+}
+
+.ask .text:hover {
+	color: var(--accent);
+}
+
+.ask .reply {
+	grid-column: 2 / 4;
+	color: var(--agent);
+	font-size: 12px;
+}
+
+.ask .tools {
+	display: flex;
+	gap: 2px;
+}
+
+.ask .tools button {
+	padding: 0 5px;
+	font-size: 11px;
+}
+
+.pill {
+	font-size: 10px;
+	padding: 1px 6px;
+	border-radius: 8px;
+	border: 1px solid var(--line);
+	color: var(--muted);
+	white-space: nowrap;
+}
+
+.pill.working {
+	border-color: var(--agent);
+	color: var(--agent);
+}
+
+.pill.done {
+	border-color: var(--human);
+	color: var(--human);
+}
+
+.plan-item {
+	font-size: 12px;
+	color: var(--muted);
+}
+
+.plan-item.in_progress {
+	color: var(--agent);
+}
+
+.plan-item.done {
+	text-decoration: line-through;
 }
