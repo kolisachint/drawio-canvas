@@ -74,6 +74,18 @@ describe("working with the agent in draw.io", { skip }, () => {
 			await frame.evaluate(() => window.drawioCanvasUi.editor.graph.container.focus());
 			await page.keyboard.press("Alt+KeyA");
 			await page.waitForFunction(() => document.activeElement?.id === "ask");
+
+			// In a text field, Alt+A is typing, not the shortcut.
+			await page.evaluate(() => document.getElementById("ask").blur());
+			const search = await frame.$("input[placeholder*='search' i]");
+			assert.ok(search, "draw.io's sidebar search box");
+			await search.focus();
+			await page.keyboard.press("Alt+KeyA");
+			assert.notEqual(await page.evaluate(() => document.activeElement?.id), "ask", "Alt+A in draw.io's search box must stay there");
+			await search.evaluate((input) => input.blur());
+			await frame.evaluate(() => window.drawioCanvasUi.editor.graph.container.focus());
+			await page.keyboard.press("Alt+KeyA");
+			await page.waitForFunction(() => document.activeElement?.id === "ask");
 			await page.keyboard.type("Make this a diamond with a yes/no edge");
 			await page.keyboard.press("Enter");
 

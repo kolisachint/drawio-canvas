@@ -1073,12 +1073,20 @@ $("digest").addEventListener("change", (event) => void collab({ op: "digest", en
 /**
  * Alt+A jumps to the ask box, from this page or from inside draw.io (same
  * origin, so its document can be listened to without touching its code). Not
- * while a label is being edited: there Alt+A is the person's to type.
+ * while a label or any text field is being edited: there Alt+A is the person's
+ * to type.
  */
 function bindAskKey(win) {
 	const onKey = (event) => {
 		if (!event.altKey || event.ctrlKey || event.metaKey || event.code !== "KeyA") return;
 		if (bridge?.ui.editor.graph.isEditing()) return;
+		// In any text field (draw.io's shape search, the format panel, the Open
+		// sheet) Alt+A is a character the person is typing, e.g. "å" on a Mac.
+		// draw.io's hidden typing shim is not one: it holds focus whenever shapes
+		// are selected, which is exactly when the shortcut matters.
+		const target = event.target;
+		const typingShim = target?.classList?.contains("mxTypingShim");
+		if (!typingShim && (target?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target?.tagName ?? ""))) return;
 		event.preventDefault();
 		event.stopPropagation();
 		$("ask").focus();
