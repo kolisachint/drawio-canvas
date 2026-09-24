@@ -24,6 +24,13 @@
  * view and running draw.io's layouts are done here, in the real editor, on the
  * server's request (`rpc` events), because only the real editor draws AWS
  * icons, stencils and HTML labels the way draw.io does.
+ *
+ * **Working with the agent.** The bar says, quietly, whether the agent is busy
+ * and on what; the person asks it for things from here (anchored to what they
+ * have selected) and keeps a short list of asks in the drawer. None of it is
+ * inside draw.io: it is this page's own chrome, so a draw.io upgrade cannot
+ * break it. Nothing is sent to the agent unless the person asks (see
+ * `lib/collab.mjs`).
  */
 
 const api = (route) => new URL(route, document.baseURI);
@@ -661,11 +668,15 @@ function listen({ onConnected } = {}) {
 	const events = new EventSource(api("api/events?role=editor"));
 	events.addEventListener("change", (event) => void bridge?.onServerChange(JSON.parse(event.data)));
 	events.addEventListener("rpc", (event) => void bridge?.handleRpc(JSON.parse(event.data)));
+	events.addEventListener("collab", (event) => renderCollab(JSON.parse(event.data)));
 	events.addEventListener("hello", (event) => {
 		// A reconnect after the server restarted (a canvas reload) or the laptop
 		// slept: catch up on whatever was missed.
 		const hello = JSON.parse(event.data);
 		onConnected?.();
+		void apiJson("api/collab")
+			.then(renderCollab)
+			.catch(() => {});
 		if (bridge && hello.version !== bridge.version) void bridge.onServerChange({ version: hello.version });
 		setStatus(bridge ? `v${hello.version}` : "connected");
 	});
@@ -770,6 +781,163 @@ $("save-file").addEventListener("click", () => void saveToWorkspace());
 $("open-file").addEventListener("click", () => void openFromWorkspace());
 $("history").addEventListener("click", () => void showHistory());
 
+// ------------------------------------------------------ working with the agent
+
+let collabState = null;
+
+/** What the person has selected, to anchor an ask to. */
+function selectionAnchor() {
+	const ui = bridge?.ui;
+	if (!ui) return {};
+	return { page_id: ui.currentPage?.getId() ?? null, cell_ids: ui.editor.graph.getSelectionCells().map((cell) => cell.id) };
+}
+
+async function collab(body) {
+	try {
+		const result = await post("api/collab", body);
+		if (result.state) renderCollab(result.state);
+		return result;
+	} catch (cause) {
+		setStatus(cause.message, "error");
+		return null;
+	}
+}
+
+/** What an ask's status looks like to the person. */
+function askLabel(ask, delivery) {
+	if (ask.status !== "open") return ask.status;
+	if (ask.seen) return "seen";
+	if (ask.sent) return "sent";
+	return delivery === "send" ? "queued" : "waiting";
+}
+
+function renderCollab(state) {
+	if (!state || state.unavailable) return;
+	collabState = state;
+	const { agent } = state;
+
+	// The chip: nothing to show until the host says anything about the agent.
+	const chip = $("agent");
+	chip.hidden = !(agent.known || agent.can_send);
+	chip.classList.toggle("busy", agent.busy);
+	const recentDigest = state.digest.sent_at && Date.now() - state.digest.sent_at < 60_000;
+	$("agent-hint").textContent = agent.busy ? agent.hint || "working" : recentDigest ? "idle · sent your edits for a look" : "idle";
+	chip.title = agent.busy ? `The agent is working: ${agent.hint || "…"}` : "The agent is idle";
+
+	const unseen = $("unseen");
+	unseen.hidden = !(state.unseen > 0 && state.delivery === "send");
+	unseen.textContent = `${state.unseen} edit${state.unseen === 1 ? "" : "s"} since the agent looked`;
+
+	const active = state.asks.filter((ask) => ask.status === "open" || ask.status === "working");
+	$("asks-count").hidden = active.length === 0;
+	$("asks-count").textContent = String(active.length);
+
+	const list = $("asks-list");
+	list.replaceChildren(...state.asks.map((ask) => askRow(ask, state.delivery)));
+	$("asks-empty").hidden = state.asks.length > 0;
+
+	$("plan").hidden = agent.todos.length === 0;
+	$("plan-list").replaceChildren(
+		...agent.todos.map((todo) => {
+			const item = document.createElement("li");
+			item.className = `plan-item ${todo.status}`;
+			item.textContent = todo.title;
+			return item;
+		}),
+	);
+
+	const digest = $("digest");
+	digest.checked = state.digest.enabled;
+	digest.disabled = !state.digest.available;
+	$("delivery-note").textContent =
+		state.delivery === "send"
+			? ""
+			: "This host cannot wake the agent: asks wait until its next action on this canvas. Mention them in the terminal to get it going.";
+}
+
+function askRow(ask, delivery) {
+	const row = document.createElement("li");
+	const finished = ask.status !== "open" && ask.status !== "working";
+	row.className = `ask${finished ? " finished" : ""}`;
+	const pill = document.createElement("span");
+	pill.className = `pill ${ask.status}`;
+	pill.textContent = askLabel(ask, delivery);
+	const text = document.createElement("span");
+	text.className = "text";
+	text.textContent = `#${ask.id} ${ask.text}`;
+	text.title = ask.cell_ids.length ? `Show ${ask.cell_ids.length} cell(s)` : "";
+	text.onclick = () => {
+		if (ask.cell_ids.length && bridge) bridge.focus({ page_id: ask.page_id, cell_ids: ask.cell_ids });
+	};
+	const tools = document.createElement("span");
+	tools.className = "tools";
+	if (!finished) {
+		const tool = (label, title, body) => {
+			const button = document.createElement("button");
+			button.textContent = label;
+			button.title = title;
+			button.onclick = () => void collab(body);
+			tools.append(button);
+		};
+		tool("↑", "Move to the top", { op: "reorder", ids: [ask.id] });
+		tool("Now", "Interrupt the agent with this", { op: "now", id: ask.id });
+		tool("×", "Withdraw this ask", { op: "update", id: ask.id, status: "dismissed" });
+	}
+	row.append(pill, text, tools);
+	if (ask.reply) {
+		const reply = document.createElement("span");
+		reply.className = "reply";
+		reply.textContent = ask.reply;
+		row.append(reply);
+	}
+	return row;
+}
+
+async function submitAsk(now) {
+	const input = $("ask");
+	const text = input.value.trim();
+	if (!text) return;
+	input.value = "";
+	const result = await collab({ op: "ask", text, now, ...selectionAnchor() });
+	if (result?.ask) {
+		const where = result.ask.cell_ids.length ? ` about ${result.ask.cell_ids.length} shape(s)` : "";
+		setStatus(`asked #${result.ask.id}${where}`);
+	}
+}
+
+$("ask").addEventListener("keydown", (event) => {
+	if (event.key === "Enter") {
+		event.preventDefault();
+		void submitAsk(event.ctrlKey || event.metaKey);
+	} else if (event.key === "Escape") {
+		$("ask").value = "";
+		$("ask").blur();
+		$("editor").contentWindow?.focus();
+	}
+});
+$("asks-toggle").addEventListener("click", () => {
+	$("drawer").hidden = !$("drawer").hidden;
+});
+$("unseen").addEventListener("click", () => void collab({ op: "review" }));
+$("digest").addEventListener("change", (event) => void collab({ op: "digest", enabled: event.target.checked }));
+
+/**
+ * Alt+A jumps to the ask box, from this page or from inside draw.io (same
+ * origin, so its document can be listened to without touching its code). Not
+ * while a label is being edited: there Alt+A is the person's to type.
+ */
+function bindAskKey(win) {
+	const onKey = (event) => {
+		if (!event.altKey || event.ctrlKey || event.metaKey || event.code !== "KeyA") return;
+		if (bridge?.ui.editor.graph.isEditing()) return;
+		event.preventDefault();
+		event.stopPropagation();
+		$("ask").focus();
+	};
+	window.addEventListener("keydown", onKey, true);
+	win?.document.addEventListener("keydown", onKey, true);
+}
+
 // ------------------------------------------------------------------ boot
 
 /**
@@ -791,6 +959,7 @@ async function boot() {
 	const { ui, win } = await startEditor();
 	persistSettings(win);
 	bridge = new Bridge(win, ui, { xml: lastState.xml, version: lastState.version });
+	bindAskKey(win);
 	setStatus(`v${lastState.version}`);
 	// Ready means the server can reach this editor, not just that draw.io drew:
 	// announce it once the editor stream is registered.

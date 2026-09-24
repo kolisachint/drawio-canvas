@@ -57,10 +57,10 @@ export function createCanvas(options) {
  * Returns the same three verbs the host has — `invoke`, `close`, plus the URL —
  * so a test reads like the sequence a session actually performs.
  */
-export async function openCanvas({ input, workspace, instanceId } = {}) {
+export async function openCanvas({ input, workspace, instanceId, agent, timers = false } = {}) {
 	const root = workspace ?? (await mkdtemp(path.join(tmpdir(), "drawio-canvas-test-")));
 	const logs = [];
-	const canvas = createDrawioCanvas({ createCanvas, CanvasError }, { extensionDir: EXTENSION_DIR, log: (line) => logs.push(line) });
+	const canvas = createDrawioCanvas({ createCanvas, CanvasError }, { extensionDir: EXTENSION_DIR, log: (line) => logs.push(line), agent, timers });
 	const id = instanceId ?? `i-${Math.random().toString(36).slice(2)}`;
 	const context = {
 		sessionId: "test-session",

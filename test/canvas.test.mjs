@@ -48,6 +48,8 @@ describe("canvas declaration", () => {
 					"screenshot",
 					"focus",
 					"layout",
+					"get_asks",
+					"update_ask",
 					"open_file",
 					"save_file",
 				],
