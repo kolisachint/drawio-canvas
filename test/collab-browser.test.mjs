@@ -134,4 +134,82 @@ describe("working with the agent in draw.io", { skip }, () => {
 			await canvas.close();
 		}
 	});
+	it("tidies in the person's editor as their own edit, and Ctrl+Z undoes it", { timeout: 240_000 }, async () => {
+		const overlapping = SAMPLE_XML.replace('<mxGeometry x="60" y="180" width="120" height="80" as="geometry" />', '<mxGeometry x="100" y="60" width="120" height="80" as="geometry" />');
+		const canvas = await openCanvas({ input: { xml: overlapping } });
+		const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+		try {
+			await page.goto(canvas.url);
+			await page.waitForFunction(() => window.drawioCanvas, null, { timeout: 180_000 });
+			const frame = page.frame({ url: /drawio\/index\.html/ });
+			const geometry = () =>
+				frame.evaluate(() => {
+					const model = window.drawioCanvasUi.editor.graph.model;
+					return ["start", "check"].map((id) => {
+						const g = model.getGeometry(model.getCell(id));
+						return [g.x, g.y, g.width, g.height];
+					});
+				});
+			const before = await geometry();
+			await page.click("#tidy");
+			const after = await geometry();
+			const [[ax, ay, aw, ah], [bx, by]] = after;
+			assert.ok(bx >= ax + aw || by >= ay + ah, `no longer overlapping: ${JSON.stringify(after)}`);
+			assert.match(await page.textContent("#status"), /tidied the page: .*moved off an overlap/);
+
+			// It reached the server as the person's edit.
+			await page.waitForTimeout(300);
+			const changes = await canvas.invoke("get_changes", {});
+			assert.ok(changes.changes.some((line) => / human /.test(line)), JSON.stringify(changes.changes));
+
+			await frame.evaluate(() => window.drawioCanvasUi.actions.get("undo").funct());
+			assert.deepEqual(await geometry(), before);
+		} finally {
+			await page.close();
+			await canvas.close();
+		}
+	});
+
+	it("adds its items to draw.io's right-click menu and badges the cells of open asks", { timeout: 240_000 }, async () => {
+		const host = fakeHost();
+		const agent = new AgentLink();
+		agent.attach(host.session);
+		const canvas = await openCanvas({ agent, input: { xml: SAMPLE_XML } });
+		const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+		try {
+			await page.goto(canvas.url);
+			await page.waitForFunction(() => window.drawioCanvas, null, { timeout: 180_000 });
+			const frame = page.frame({ url: /drawio\/index\.html/ });
+
+			const labels = await frame.evaluate(() => {
+				const ui = window.drawioCanvasUi;
+				const graph = ui.editor.graph;
+				const menu = new window.mxPopupMenu();
+				menu.init();
+				const items = [];
+				const addItem = menu.addItem;
+				menu.addItem = function (label, ...rest) {
+					items.push(label);
+					return addItem.call(this, label, ...rest);
+				};
+				graph.setSelectionCell(graph.model.getCell("start"));
+				ui.menus.createPopupMenu(menu, graph.model.getCell("start"), null);
+				menu.destroy();
+				return items;
+			});
+			assert.ok(labels.includes("Ask the agent about this…"), JSON.stringify(labels));
+			assert.ok(labels.includes("Tidy"));
+
+			await canvas.fetch("api/collab", { method: "POST", body: JSON.stringify({ op: "ask", text: "Rename", page_id: "p1", cell_ids: ["start", "check"] }) });
+			const overlays = () => frame.evaluate(() => ["start", "check", "link"].map((id) => window.drawioCanvasUi.editor.graph.getCellOverlays(window.drawioCanvasUi.editor.graph.model.getCell(id))?.length ?? 0));
+			await page.waitForFunction(() => document.querySelectorAll("#asks-list .ask").length === 1);
+			assert.deepEqual(await overlays(), [1, 1, 0]);
+			await canvas.invoke("update_ask", { id: 1, status: "done" });
+			await page.waitForFunction(() => document.querySelector("#asks-list .pill")?.textContent === "done");
+			assert.deepEqual(await overlays(), [0, 0, 0]);
+		} finally {
+			await page.close();
+			await canvas.close();
+		}
+	});
 });

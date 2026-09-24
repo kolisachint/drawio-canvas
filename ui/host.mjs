@@ -33,6 +33,8 @@
  * `lib/collab.mjs`).
  */
 
+import { describeTidy, tidy } from "../lib/tidy.mjs";
+
 const api = (route) => new URL(route, document.baseURI);
 const $ = (id) => document.getElementById(id);
 
@@ -68,7 +70,17 @@ async function apiJson(route, options = {}) {
 
 const post = (route, body) => apiJson(route, { method: "POST", body: JSON.stringify(body) });
 
-function setStatus(text, kind = "") {
+/** Until when a message the person should read holds the status line. */
+let statusHeldUntil = 0;
+
+/**
+ * Say something in the status line. `hold` keeps it for that many ms against
+ * routine updates ("v3 saved"), which otherwise replace a result the person
+ * just asked for before they can read it. Errors always get through.
+ */
+function setStatus(text, kind = "", { hold = 0 } = {}) {
+	if (Date.now() < statusHeldUntil && kind !== "error" && hold === 0) return;
+	statusHeldUntil = hold > 0 ? Date.now() + hold : 0;
 	const status = $("status");
 	status.textContent = text;
 	status.className = `status ${kind}`;
@@ -309,6 +321,7 @@ export class Bridge {
 		this.serverXml = state.xml;
 		this.version = state.version;
 		this.reconcile(state.xml);
+		if (collabState) this.showAskBadges(collabState.asks);
 		setFile(state.filePath);
 		if (event.source === "agent") {
 			this.highlight(event.touched ?? []);
@@ -535,6 +548,89 @@ export class Bridge {
 				reject(new Error(`${cause.message}${presets.length ? ` Presets: ${presets.join(", ")}.` : ""}`));
 			}
 		});
+	}
+
+	// ------------------------------------------------------- the person's tools
+
+	/**
+	 * Tidy the selection, or the page when nothing is selected, as the person's
+	 * own edit: one undo step, synced like any other. Labels are measured by
+	 * draw.io, which the server cannot do.
+	 */
+	tidy() {
+		const graph = this.ui.editor.graph;
+		const model = graph.model;
+		const shapes = [];
+		const edges = [];
+		const cells = Object.values(model.cells ?? {});
+		for (const cell of cells) {
+			const geometry = model.getGeometry(cell);
+			if (model.isVertex(cell) && geometry && !geometry.relative && geometry.width > 0 && geometry.height > 0 && cell.parent) {
+				const label = graph.convertValueToString(cell) ?? "";
+				let preferred;
+				if (label.trim()) {
+					const size = graph.getPreferredSizeForCell(cell);
+					// Past this width draw.io would wrap; let tidy estimate instead.
+					if (size && size.width <= 320) preferred = { width: size.width, height: size.height };
+				}
+				shapes.push({ id: cell.id, parent: cell.parent.id, x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height, label, style: cell.style ?? "", preferred });
+			} else if (model.isEdge(cell)) {
+				edges.push({ id: cell.id, source: cell.source?.id, target: cell.target?.id, points: geometry?.points?.length ?? 0 });
+			}
+		}
+		const selected = graph.getSelectionCells().filter((cell) => model.isVertex(cell)).map((cell) => cell.id);
+		const result = tidy(shapes, edges, { scope: selected, grid: graph.gridSize || 10 });
+		if (result.changes.length === 0 && result.clearPoints.length === 0) return result.summary;
+		model.beginUpdate();
+		try {
+			for (const change of result.changes) {
+				const cell = model.getCell(change.id);
+				const geometry = model.getGeometry(cell)?.clone();
+				if (!geometry) continue;
+				Object.assign(geometry, { x: change.x, y: change.y, width: change.width, height: change.height });
+				model.setGeometry(cell, geometry);
+			}
+			for (const id of result.clearPoints) {
+				const cell = model.getCell(id);
+				const geometry = model.getGeometry(cell)?.clone();
+				if (!geometry) continue;
+				geometry.points = null;
+				model.setGeometry(cell, geometry);
+			}
+		} finally {
+			model.endUpdate();
+		}
+		return result.summary;
+	}
+
+	/**
+	 * Numbered badges on the cells the person's open asks are about, drawn with
+	 * draw.io's own cell overlays — no change to draw.io, and gone with the ask.
+	 */
+	showAskBadges(asks) {
+		const win = this.win;
+		const graph = this.ui.editor.graph;
+		for (const { cell, overlay } of this.badges ?? []) graph.removeCellOverlay(cell, overlay);
+		this.badges = [];
+		if (typeof win.mxCellOverlay !== "function") return;
+		const pageId = this.ui.currentPage?.getId();
+		for (const ask of asks) {
+			if ((ask.status !== "open" && ask.status !== "working") || (ask.page_id && ask.page_id !== pageId)) continue;
+			const colour = ask.status === "working" ? "#8250df" : "#656d76";
+			const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"><circle cx="9" cy="9" r="8" fill="${ask.status === "working" ? colour : "#fff"}" stroke="${colour}" stroke-width="1.5"/><text x="9" y="12.5" font-size="10" font-family="sans-serif" text-anchor="middle" fill="${ask.status === "working" ? "#fff" : colour}">${ask.id}</text></svg>`;
+			const image = new win.mxImage(`data:image/svg+xml,${encodeURIComponent(svg)}`, 18, 18);
+			for (const id of ask.cell_ids) {
+				const cell = graph.model.getCell(id);
+				if (!cell) continue;
+				const overlay = new win.mxCellOverlay(image, `Ask #${ask.id} (${ask.status}): ${ask.text}`, win.mxConstants.ALIGN_RIGHT, win.mxConstants.ALIGN_TOP);
+				overlay.cursor = "pointer";
+				overlay.addListener(win.mxEvent.CLICK, () => {
+					$("drawer").hidden = false;
+				});
+				graph.addCellOverlay(cell, overlay);
+				this.badges.push({ cell, overlay });
+			}
+		}
 	}
 
 	async handleRpc({ id, method, params }) {
@@ -846,6 +942,8 @@ function renderCollab(state) {
 		}),
 	);
 
+	bridge?.showAskBadges(state.asks);
+
 	const digest = $("digest");
 	digest.checked = state.digest.enabled;
 	digest.disabled = !state.digest.available;
@@ -901,7 +999,7 @@ async function submitAsk(now) {
 	const result = await collab({ op: "ask", text, now, ...selectionAnchor() });
 	if (result?.ask) {
 		const where = result.ask.cell_ids.length ? ` about ${result.ask.cell_ids.length} shape(s)` : "";
-		setStatus(`asked #${result.ask.id}${where}`);
+		setStatus(`asked #${result.ask.id}${where}`, "", { hold: 3000 });
 	}
 }
 
@@ -919,6 +1017,35 @@ $("asks-toggle").addEventListener("click", () => {
 	$("drawer").hidden = !$("drawer").hidden;
 });
 $("unseen").addEventListener("click", () => void collab({ op: "review" }));
+$("tidy").addEventListener("click", () => runTidy());
+
+/** Tidy now, here, without the agent: fit, align, un-overlap. Ctrl+Z undoes it. */
+function runTidy() {
+	if (!bridge) return;
+	const scope = bridge.ui.editor.graph.getSelectionCount() > 0 ? "selection" : "page";
+	setStatus(`tidied the ${scope}: ${describeTidy(bridge.tidy())}`, "", { hold: 4000 });
+}
+
+/**
+ * Two items at the end of draw.io's right-click menu, through the extension
+ * point draw.io's own plugins use. If a draw.io release renames it, the items
+ * are simply missing; the bar's buttons still work.
+ */
+function extendContextMenu(ui) {
+	const menus = ui.menus;
+	if (typeof menus?.createPopupMenu !== "function") return;
+	const original = menus.createPopupMenu;
+	menus.createPopupMenu = function (menu, ...rest) {
+		original.call(this, menu, ...rest);
+		try {
+			menu.addSeparator();
+			menu.addItem("Ask the agent about this…", null, () => $("ask").focus());
+			menu.addItem("Tidy", null, () => runTidy());
+		} catch {
+			// Not worth breaking the person's menu over.
+		}
+	};
+}
 $("digest").addEventListener("change", (event) => void collab({ op: "digest", enabled: event.target.checked }));
 
 /**
@@ -960,6 +1087,8 @@ async function boot() {
 	persistSettings(win);
 	bridge = new Bridge(win, ui, { xml: lastState.xml, version: lastState.version });
 	bindAskKey(win);
+	extendContextMenu(ui);
+	ui.editor.addListener("pageSelected", () => collabState && bridge.showAskBadges(collabState.asks));
 	setStatus(`v${lastState.version}`);
 	// Ready means the server can reach this editor, not just that draw.io drew:
 	// announce it once the editor stream is registered.

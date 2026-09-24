@@ -81,7 +81,7 @@ describe("as a forked canvas extension", () => {
 		assert.equal(ready.canvases[0].displayName, "Draw.io Canvas");
 		assert.deepEqual(
 			ready.canvases[0].actions.map((action) => action.name),
-			["get_diagram", "get_changes", "edit_diagram", "search_shapes", "insert_shapes", "replace_diagram", "manage_pages", "manage_layers", "screenshot", "focus", "layout", "get_asks", "update_ask", "open_file", "save_file"],
+			["get_diagram", "get_changes", "edit_diagram", "search_shapes", "insert_shapes", "replace_diagram", "manage_pages", "manage_layers", "screenshot", "focus", "layout", "tidy", "get_asks", "update_ask", "open_file", "save_file"],
 		);
 		// Nothing declared that the host cannot serve.
 		assert.deepEqual(ready.unsupported, []);
