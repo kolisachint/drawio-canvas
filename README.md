@@ -1,7 +1,8 @@
 # drawio-canvas
 
-The full draw.io editor, as a hoocode canvas, that a person and an agent edit
-**at the same time**.
+The full draw.io editor, as a canvas for **GitHub Copilot** (the CLI, in a
+terminal or in VS Code) and **hoocode**, that a person and an agent edit **at
+the same time**.
 
 The person gets draw.io itself in their browser — the same editor as the
 desktop app: every shape library (AWS, Azure, GCP, Kubernetes, Cisco, IBM, SAP,
@@ -14,9 +15,8 @@ and neither silently overwrites the other.
 The person can also ask the agent for things from the canvas, see quietly
 whether it is busy and on what, and fix small things instantly without it.
 
-```
-/canvas open drawio-canvas
-```
+In GitHub Copilot, ask for it ("open the draw.io canvas and sketch our
+architecture") and the agent opens it; in hoocode, `/canvas open drawio-canvas`.
 
 No desktop app, no service to run, no network: draw.io **31.4.6** ships in this
 repository (`assets/drawio-31.4.6.war`, draw.io's own release archive, pinned by
@@ -27,7 +27,66 @@ made here opens in draw.io, and the other way round.
 
 ## Install
 
-### From hoocode (recommended)
+### In GitHub Copilot CLI
+
+This repository is a Copilot plugin marketplace (`.github/plugin/`), and the
+plugin carries the canvas where Copilot loads a plugin's extensions
+(`extensions/drawio-canvas/extension.mjs`):
+
+```bash
+copilot plugin marketplace add kolisachint/drawio-canvas
+copilot plugin install drawio-canvas@drawio-canvas
+copilot --experimental
+```
+
+(Inside a session the same commands are `/plugin marketplace add …` and `/plugin
+install …`. `copilot plugin install kolisachint/drawio-canvas` also works, but
+Copilot has deprecated direct installs in favour of `plugin@marketplace`; install
+one way, not both, or two copies register the same canvas.) Then ask for a
+diagram. The agent opens the canvas: on a desktop, in Copilot's own canvas
+window; without a display (SSH, a container), Copilot prints *Open in browser*
+with the URL.
+
+**Canvases need Copilot's experimental mode** (Copilot CLI 1.0.89): start once
+with `copilot --experimental`, or run `/experimental on` and `/restart`; it is
+remembered. Without it Copilot still loads the canvas but never offers the agent
+`open_canvas`, and the canvas says so in the timeline rather than staying
+silently unreachable.
+
+`copilot plugin update drawio-canvas@drawio-canvas` picks up a newer version.
+
+### In VS Code
+
+Run the Copilot CLI in VS Code's integrated terminal (`copilot --experimental`,
+installed as above), and let VS Code open the canvas beside your code: with
+
+```jsonc
+// settings.json
+"workbench.browser.openLocalhostLinks": true,
+// on a desktop Copilot would otherwise open its own window; a VS Code tab instead:
+"terminal.integrated.env.linux": { "COPILOT_CANVAS_NATIVE_WINDOW": "false" }   // .osx / .windows likewise
+```
+
+Ctrl/Cmd+click on *Open in browser* in the terminal opens the full draw.io in a
+VS Code **Integrated Browser** tab beside your code. Tested end to end in VS Code
+1.139 (`scripts/e2e-copilot.mjs --host vscode`): the agent's edits appearing
+there, the bar showing it busy, the person's edits reaching it, a refused blind
+edit rebuilt on the person's version, an ask from the canvas (`Alt+A`) waking
+the agent, "this" meaning the selection, an extension reload keeping the tab,
+and every action, screenshots and PNGs rendered in that tab included.
+
+VS Code's **Chat view** does not host canvases yet (VS Code 1.139): its own
+agent has no canvases, and its Copilot CLI session type asks the Copilot runtime
+for neither a canvas renderer nor extensions, so the agent there is never
+offered `open_canvas`. Canvas support for VS Code's Agents window is in progress
+([microsoft/vscode#337780](https://github.com/microsoft/vscode/pull/337780),
+behind `sessions.experimental.canvases.enabled`); this canvas is tested against
+the exact configuration that change uses — the Copilot SDK with
+`requestExtensions`, `requestCanvasRenderer`, the plugin as a plugin directory,
+and extensions launched as VS Code launches them (`--host sdk`) — so it should
+open in a tab beside the chat once that ships.
+
+### From hoocode
 
 This repository is its own plugin marketplace
 (`.agents-plugin/marketplace.json`), so hoocode installs it in three commands:
@@ -52,25 +111,28 @@ must be named `drawio-canvas`, because a canvas's id is its directory name.
 macOS / Linux:
 
 ```bash
-# For one project
-git clone https://github.com/kolisachint/drawio-canvas .agents/extensions/drawio-canvas
-
-# For every project on this machine
+# For every project on this machine (GitHub Copilot and hoocode)
 git clone https://github.com/kolisachint/drawio-canvas ~/.copilot/extensions/drawio-canvas
+
+# For one project: GitHub Copilot
+git clone https://github.com/kolisachint/drawio-canvas .github/extensions/drawio-canvas
+# For one project: hoocode
+git clone https://github.com/kolisachint/drawio-canvas .agents/extensions/drawio-canvas
 ```
 
 Windows (PowerShell):
 
 ```powershell
-# For one project
-git clone https://github.com/kolisachint/drawio-canvas .agents\extensions\drawio-canvas
-
-# For every project on this machine
+# For every project on this machine (GitHub Copilot and hoocode)
 git clone https://github.com/kolisachint/drawio-canvas "$HOME\.copilot\extensions\drawio-canvas"
+
+# For one project: GitHub Copilot, or hoocode
+git clone https://github.com/kolisachint/drawio-canvas .github\extensions\drawio-canvas
+git clone https://github.com/kolisachint/drawio-canvas .agents\extensions\drawio-canvas
 ```
 
-Then `/canvas open drawio-canvas`. To update, `git pull` in that directory and
-`/canvas reload drawio-canvas`.
+To update, `git pull` in that directory, then `/restart` in Copilot (or ask it
+to reload extensions), or `/canvas reload drawio-canvas` in hoocode.
 
 Optionally unpack draw.io ahead of the first open (otherwise it happens on
 first open, about two seconds):
@@ -83,10 +145,12 @@ node scripts/install-drawio.mjs
 
 | | Supported |
 |---|---|
+| **GitHub Copilot CLI** | **1.0.89 or newer, in experimental mode** (tested with 1.0.89 and `@github/copilot-sdk` 1.0.15). Installed as a plugin or by hand; opened by the agent; shown in Copilot's own canvas window, or at the URL it prints. |
+| **VS Code** | **1.139**, through the Copilot CLI in the integrated terminal, with the canvas in an Integrated Browser tab (see *In VS Code*). The Chat view does not host canvases yet. |
 | **hoocode** | **0.5.81 or newer.** 0.5.81 is the first release that tells a canvas its working directory; on older releases the canvas opens, but **Open…** / **Save** and the `open_file` / `save_file` / `screenshot` actions need `DRAWIO_CANVAS_WORKSPACE` set. Asks that wake the agent, the agent status chip, the idle digest and the selection pill need a release after 0.5.87 (canvas `session.send`, `session.on` and `sendAttachmentsToMessage`); on an older one the canvas works as before and asks wait for the agent's next canvas call. |
-| **Node.js** | **20.6 or newer** on `PATH` (hoocode forks canvases with Node, also when hoocode itself is the standalone binary). No npm install, no build, no dependencies. |
+| **Node.js** | **20.6 or newer** on `PATH` for hoocode (it forks canvases with Node, also when hoocode itself is the standalone binary). GitHub Copilot runs extensions with the Node it bundles. No npm install, no build, no dependencies. |
 | **OS** | macOS, Linux and Windows 10/11. Nothing is native; the only platform difference is the cache directory below. |
-| **Browser** | Any current browser draw.io supports (Chrome, Edge, Firefox, Safari). The page is served on `127.0.0.1`; the end-to-end tests run in Chromium. |
+| **Browser** | Any current browser draw.io supports (Chrome, Edge, Firefox, Safari), VS Code's Integrated Browser, and Copilot's canvas window (WebKitGTK on Linux, WebKit on macOS, WebView2 on Windows). The page is served on `127.0.0.1`; the end-to-end tests run in Chromium, in VS Code, and in Copilot's window on Linux. |
 | **draw.io** | 31.4.6, bundled and pinned by SHA-256. Files are ordinary `.drawio` and open in any draw.io (desktop, app.diagrams.net) and vice versa. |
 | **Network** | None needed at any point. |
 
@@ -199,25 +263,33 @@ bury it in noise. What does reach it:
 
 | The person… | The agent gets |
 |---|---|
-| asks, while the agent is **idle** | one message at once, labelled `[canvas drawio-canvas]`, listing the open asks; a turn starts |
+| asks, while the agent is **idle** | one message at once, listing the open asks; a turn starts. hoocode labels it `[canvas drawio-canvas]`; GitHub Copilot's timeline shows the person's words (`[draw.io canvas] "…"`) instead of the instructions that go to the agent |
 | asks, while the agent is **busy** | nothing extra now: its next canvas call carries the ask (`new_asks`), so it can pick it up between steps. What is still open when it goes idle is sent then, as one message, so an ask it already handled never starts a second turn |
 | presses `Ctrl/Cmd+Enter` or **Now** | the ask at once, steering the turn in progress |
 | clicks **N edits since the agent looked** | one review ask, anchored to the cells they changed |
 | pauses, with **Nudge the agent when I pause** on | at most once per idle stretch, and only after the agent has been idle a minute and the person stopped editing for 20 s: a short list of what they changed, with "act only if something is clearly broken" |
-| types in the **terminal** with shapes selected | their message, with the selection attached (hoocode shows it as a pill above the prompt first), so "this" means those shapes |
+| types in the **terminal** with shapes selected | their message, and "this" means those shapes. hoocode attaches the selection to the message (shown as a pill above the prompt first). GitHub Copilot's terminal and VS Code do not show extension pills yet, so there the agent finds the selection in `person.looking_at.selected` on its first canvas call, as the canvas description tells it to |
 
 hoocode adds its own limits on top — a canvas's waiting message is replaced by
 its newer one, steering is rate-limited, and a canvas cannot start more than
 three turns before the person says something (see hoocode's `docs/canvas.md`).
+GitHub Copilot adds none, so there the canvas's own rules above are the whole of
+it: nothing is sent on an edit, and the digest goes at most once per idle
+stretch.
 
 **Quick answers.** An ask anchored to shapes hands the agent those shapes' XML,
 so it can answer in one edit instead of read, think, edit. The agent marks an
 ask `working` as soon as it edits its cells, and its reply shows in the drawer.
 For layout chores, **Tidy** needs no agent at all.
 
-**Reloads keep the tab.** `reload_canvas` restarts the extension; the canvas
-keeps its port and token, the page's event stream reconnects by itself, catches
-up, and the asks are still there.
+**Reloads keep the tab.** `reload_canvas` (hoocode), `extensions_reload` and
+`/restart` (GitHub Copilot) restart the extension; the canvas keeps its port and
+token, the page's event stream reconnects by itself, catches up, tells the new
+process where the person is, and the diagram and the asks are still there.
+hoocode closes the instance first; Copilot stops the process with a signal and
+re-opens the instance in the new one, so the canvas parks every open instance
+on its way out either way. A parked instance is taken back only within a minute,
+and only by the same host session.
 
 ---
 
@@ -246,6 +318,23 @@ The model is told these classes in the canvas description, and hoocode reports
 the latency it actually observed for each action (`observed_ms`) in
 `list_canvas_capabilities`.
 
+Through GitHub Copilot (`scripts/e2e-copilot.mjs`, same machine) the canvas is
+as fast, and Copilot adds its own handling of each call. Measured from the
+model's call to Copilot's next model request:
+
+| What | Copilot CLI (terminal) | In VS Code (CLI in its terminal) | SDK host (VS Code's Agents-window configuration) |
+|---|---|---|---|
+| Copilot start → canvas extension ready | ~1.8 s | ~10 s (VS Code starting included) | ~0.4 s |
+| Link clicked → draw.io ready | ~2.4 s (Chromium), ~5.5 s (Copilot's window) | ~2.9 s (Integrated Browser) | |
+| Reads, edits, pages, layers, asks | 100–175 ms | 60–165 ms | 30–45 ms |
+| `screenshot`, `.png` export | 140–220 ms | 185–230 ms | 70–100 ms |
+| `layout` | ~0.32 s | ~0.31 s | ~0.25 s |
+| An ask from the canvas → the agent done (four scripted model turns) | ~0.6 s | ~0.5 s | ~0.2 s |
+| The person pauses → one idle digest | ~64 s (a minute idle, by design) | | |
+
+A real model's turn takes seconds, so what the person feels is the model; the
+canvas and Copilot together stay well under a second per step.
+
 ---
 
 ## Security
@@ -265,6 +354,13 @@ gate is not in front of it. So:
   unpacked atomically.
 - **Diagrams are data.** Labels from a repository are drawn, never interpreted,
   by the canvas's own code.
+- **Parked documents are short-lived.** When the extension stops (a close, a
+  reload, a restart, a signal), each open document, with its port and token, is
+  written owner-only (`0600`, in a `0700` directory) under the system temp
+  directory, keyed by the host session. It is taken back and deleted by the
+  next process, or swept after a minute.
+- **No secrets asked for.** The canvas requests no environment variables from
+  Copilot (`requestedEnvironmentVariables`) and needs no GitHub token.
 
 ---
 
@@ -272,7 +368,9 @@ gate is not in front of it. So:
 
 ```
 extension.mjs        the host-facing surface
-.agents-plugin/      plugin.json and marketplace.json — what /plugin reads
+extensions/drawio-canvas/extension.mjs   the same canvas, where GitHub Copilot loads a plugin's extensions
+.github/plugin/      plugin.json and marketplace.json for GitHub Copilot
+.agents-plugin/      plugin.json and marketplace.json for hoocode's /plugin
 assets/              drawio-31.4.6.war — the pinned draw.io release
 data/                shapes-31.4.6.json.gz — every library shape, for search_shapes
 lib/
@@ -334,10 +432,41 @@ DRAWIO_CANVAS_PLAYWRIGHT=/tmp/pw/node_modules/playwright \
 Against a hoocode checkout that is not built, use
 `HOOCODE_DIR=<hoocode> HOOCODE_BIN=scripts/hoocode-from-source.mjs`.
 
+The same collaboration through GitHub Copilot, with nothing stubbed but the
+model (Copilot's bring-your-own-key provider pointed at a scripted OpenAI
+chat-completions server, so no GitHub account is needed), in three hosts:
+
+```bash
+npm install --prefix /tmp/ghcp @github/copilot @github/copilot-sdk   # outside the checkout
+
+# The Copilot CLI's terminal, in a pseudo-terminal (needs python3): installed
+# with `copilot plugin …`, the experimental-mode hint, open, draw, react, refuse
+# and rebuild, an ask that wakes the agent, "this", extensions_reload keeping the
+# tab, every action timed. --digest waits out the idle digest; --native (with a
+# display) also opens Copilot's own canvas window and screenshots from it.
+COPILOT_BIN=/tmp/ghcp/node_modules/.bin/copilot \
+DRAWIO_CANVAS_PLAYWRIGHT=/tmp/pw/node_modules/playwright \
+  node scripts/e2e-copilot.mjs [--out /tmp/copilot-e2e] [--digest] [--native]
+
+# The SDK, configured as VS Code's Agents window configures it.
+COPILOT_SDK=/tmp/ghcp/node_modules/@github/copilot-sdk \
+DRAWIO_CANVAS_PLAYWRIGHT=/tmp/pw/node_modules/playwright \
+  node scripts/e2e-copilot.mjs --host sdk
+
+# Real VS Code: the CLI in the integrated terminal, the person in VS Code's
+# Integrated Browser after Ctrl+clicking the link.
+VSCODE_BIN=<VSCode-linux-x64>/code COPILOT_BIN=/tmp/ghcp/node_modules/.bin/copilot \
+DRAWIO_CANVAS_PLAYWRIGHT=/tmp/pw/node_modules/playwright \
+  xvfb-run -a node scripts/e2e-copilot.mjs --host vscode
+```
+
 ### Continuous integration
 
-Not committed (the authoring session could not create workflows). Save as
-`.github/workflows/ci.yml`:
+Not committed yet: pushing a workflow needs a token with the `workflow` scope,
+which the authoring sessions did not have. Save this as
+`.github/workflows/ci.yml`. It runs the unit and browser tests on every push,
+and the end-to-end runs (hoocode, and GitHub Copilot in all three hosts) on pull
+requests:
 
 ```yaml
 name: CI
@@ -345,6 +474,7 @@ on:
   push:
     branches: ["**"]
   pull_request:
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -360,10 +490,49 @@ jobs:
           npm init -y >/dev/null
           npm install playwright@1
           npx playwright install --with-deps chromium
-      - name: Test
+      - name: Unit, protocol and browser tests
         env:
           DRAWIO_CANVAS_PLAYWRIGHT: ${{ runner.temp }}/node_modules/playwright
         run: node --test "test/*.test.mjs"
+
+  e2e:
+    # The whole collaboration through real hosts, with a scripted model.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the hosts and the browser driver
+        working-directory: ${{ runner.temp }}
+        run: |
+          npm init -y >/dev/null
+          npm install playwright@1 @github/copilot@1 @github/copilot-sdk@1 @kolisachint/hoocode-agent
+          npx playwright install --with-deps chromium
+          curl -sSL -o code.tar.gz "https://update.code.visualstudio.com/latest/linux-x64/stable"
+          tar xzf code.tar.gz
+      - name: hoocode
+        env:
+          HOOCODE_BIN: ${{ runner.temp }}/node_modules/@kolisachint/hoocode-agent/bin/hoocode.js
+          DRAWIO_CANVAS_PLAYWRIGHT: ${{ runner.temp }}/node_modules/playwright
+        run: node scripts/e2e-hoocode.mjs
+      - name: GitHub Copilot CLI (terminal)
+        env:
+          COPILOT_BIN: ${{ runner.temp }}/node_modules/.bin/copilot
+          DRAWIO_CANVAS_PLAYWRIGHT: ${{ runner.temp }}/node_modules/playwright
+        run: node scripts/e2e-copilot.mjs --digest
+      - name: GitHub Copilot SDK (VS Code's Agents-window configuration)
+        env:
+          COPILOT_SDK: ${{ runner.temp }}/node_modules/@github/copilot-sdk
+          DRAWIO_CANVAS_PLAYWRIGHT: ${{ runner.temp }}/node_modules/playwright
+        run: node scripts/e2e-copilot.mjs --host sdk
+      - name: VS Code (Copilot CLI in its terminal, the canvas in its Integrated Browser)
+        env:
+          VSCODE_BIN: ${{ runner.temp }}/VSCode-linux-x64/code
+          COPILOT_BIN: ${{ runner.temp }}/node_modules/.bin/copilot
+          DRAWIO_CANVAS_PLAYWRIGHT: ${{ runner.temp }}/node_modules/playwright
+        run: xvfb-run -a node scripts/e2e-copilot.mjs --host vscode
 ```
 
 ## Credits
