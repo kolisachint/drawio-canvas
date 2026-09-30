@@ -6,8 +6,14 @@ changed recently, and what is still open.
 
 ## The shape of it
 
-A hoocode canvas extension: `extension.mjs` is forked by the host and speaks
-the canvas JSON-RPC protocol; `lib/canvas.mjs` declares the actions. Each open
+A canvas extension for GitHub Copilot (CLI 1.0.89+, experimental mode; in VS
+Code through the CLI in its terminal) and for hoocode: `extension.mjs` is
+forked by the host and speaks the canvas JSON-RPC protocol through
+`@github/copilot-sdk/extension`; `lib/canvas.mjs` declares the actions. Copilot
+loads it from `extensions/drawio-canvas/extension.mjs` (a one-line import of the
+root), the only place it looks in an installed plugin; hoocode and a hand clone
+load the root. The two plugin manifests are `.github/plugin/` (Copilot) and
+`.agents-plugin/` (hoocode, which wins precedence when both are present). Each open
 canvas gets a loopback server (`lib/server.mjs`) that serves:
 
 - `/` — `ui/index.html` + `ui/host.mjs`: a slim bar and draw.io in a same-origin
@@ -37,6 +43,19 @@ person's selection (presence) ─▶ collab.mjs ─▶ sendAttachmentsToMessage 
 once `joinSession` resolves; every instance's `Collaboration` (`lib/collab.mjs`)
 shares it. A host without `send`/`on` leaves it inert and nothing else changes.
 
+The hosts differ in ways that matter here (all verified against the real
+thing by `scripts/e2e-copilot.mjs` and `scripts/e2e-hoocode.mjs`):
+
+| | hoocode | GitHub Copilot |
+|---|---|---|
+| Who opens it | the person, `/canvas open` | the agent, `open_canvas` (it asks `list_canvas_capabilities` first) |
+| Canvas tools offered | always | only where the session renders canvases: the CLI in experimental mode, or an SDK host that sets `requestCanvasRenderer` (VS Code's Agents window, in progress). `canvasSupportNote` tells the person otherwise |
+| `input` | JSON-decoded if a string | validated against the declared schema *before* it reaches the canvas; `null` is what the model is told to send for "no input" |
+| Large results | cut at 8,000 characters | over 20 KiB, only a file path reaches the model |
+| Messages from `session.send` | labelled `[canvas <id>]`, rate-limited | unlabelled and unlimited; `displayPrompt` is the timeline's line |
+| Selection pill | shown | accepted, not shown (the agent reads `looking_at`) |
+| Reload | `canvas.close`, then a new process | a signal, then `canvas.open` of the same instance in a new process |
+
 ## Rules that are not style
 
 1. **No `package.json`, no `node_modules`** in this directory. The only
@@ -45,9 +64,11 @@ shares it. A host without `send`/`on` leaves it inert and nothing else changes.
    installed outside (`/tmp/pw`) and named by `DRAWIO_CANVAS_PLAYWRIGHT`.
 2. **stdout is the JSON-RPC channel.** Log with `session.log` (the `log`
    callback), never `console.log`, in anything the extension process runs.
-3. **After editing `extension.mjs` or `lib/`, call `reload_canvas`**; the
-   running child was forked from the old code. The person's tab reconnects by
-   itself (same port and token); only if the port was taken meanwhile is there a
+3. **After editing `extension.mjs` or `lib/`, reload the extension**
+   (`reload_canvas` in hoocode, `extensions_reload` or `/restart` in Copilot);
+   the running child was forked from the old code. The person's tab reconnects by
+   itself (same port and token) because every open instance is parked on close
+   *and* on exit (`parkOnExit`); only if the port was taken meanwhile is there a
    new URL to give them.
 4. **Nothing leaves the machine.** Keep the draw.io CSP in `lib/server.mjs`
    same-origin; never add `unsafe-eval`. Network is used only by the fallback
@@ -73,10 +94,21 @@ shares it. A host without `send`/`on` leaves it inert and nothing else changes.
    `assets/drawio-<v>.war` with that release's `draw.war`, rebuild
    `data/shapes-<v>.json.gz` with `scripts/build-shape-index.mjs`, bump the
    version asserted in `test/drawio.test.mjs` and `test/dist.test.mjs`, and run
-   the draw.io and hoocode end-to-end tests. `ui/capture.js` and `host.mjs` use
+   the draw.io, hoocode and Copilot end-to-end tests. `ui/capture.js` and `host.mjs` use
    draw.io internals (`App.main` callback, `diffPages`, `patch`,
    `getPagesForXml`, `exportToCanvas`, `executeLayoutSpec`, and the three in
    rule 8); the e2e tests are what catch their drift.
+
+10. **The capability listing stays under 19 KiB** as Copilot pretty-prints it
+    (`test/canvas.test.mjs`). Past 20 KiB Copilot hands the model a file path
+    instead of the schemas, and the agent spends a turn reading it before it can
+    draw anything. A new action or field pays for itself by trimming words
+    elsewhere; a rule that applies to many actions goes in the canvas
+    description once (as the page selector's does).
+11. **Keep both entry points and both manifests.** `extensions/drawio-canvas/`
+    must stay a one-line import of the root `extension.mjs` (Copilot finds a
+    plugin's canvas nowhere else; a symlink would loop), and the versions in
+    `.github/plugin/` and `.agents-plugin/` move together.
 
 ## Testing
 
@@ -101,7 +133,32 @@ action's contract, the gate, or anything in `server.mjs` / `host.mjs`; update
 the "How fast" table in README and the speeds in the canvas description if
 its timings move.
 
+GitHub Copilot end to end is `scripts/e2e-copilot.mjs`, the same collaboration
+through the real Copilot runtime (bring-your-own-key provider pointed at a
+scripted model; no GitHub account), in three hosts: `--host tui` (the CLI's
+terminal in a Python pty; installs with `copilot plugin …`; `--native` adds
+Copilot's own WebKit window under a display), `--host sdk` (`CopilotClient`
+configured exactly as VS Code's Agents window configures it) and `--host vscode`
+(real VS Code under `xvfb-run`: the CLI in the integrated terminal, the person in
+the Integrated Browser after Ctrl+clicking the link). Needs `@github/copilot` and
+`@github/copilot-sdk` installed outside the checkout, like Playwright. Run it
+after the same kinds of change as the hoocode one, and after anything touching
+schemas, `extension.mjs`, parking, or `session.send`.
+
 ## Recent changes
+
+- **GitHub Copilot, and VS Code through it.** Loads as a Copilot plugin
+  (`.github/plugin/`, `extensions/drawio-canvas/extension.mjs`) and was run end
+  to end in Copilot CLI 1.0.89, the SDK in VS Code's configuration, and real
+  VS Code 1.139. What that needed: action and open schemas accept `null` when
+  nothing is required (Copilot validates first and tells the model to send it);
+  the capability listing cut from 23.9 KB to 19 KB (Copilot inlines 20 KiB);
+  instances parked on exit and on signals, not only on close, and parked
+  snapshots scoped by host session (Copilot's instance ids are model-chosen, so
+  "drawio-1" is everywhere); the page re-sends presence after a restart; a
+  timeline line of the person's own words (`displayPrompt`) for messages the
+  canvas sends; a warning in the timeline when the session does not render
+  canvases (Copilot without experimental mode) instead of silence.
 
 - **Working with the agent, not just beside it.** The person asks from the bar
   (`Alt+A`, Enter; `Ctrl+Enter` interrupts) about what they have selected; asks
@@ -200,8 +257,24 @@ its timings move.
 
 Open work, roughly by value. Each is a place to pick up.
 
-- [ ] **CI workflow not committed.** The YAML is in README; committing it needs a
-      token with `workflows` scope. Include the draw.io e2e and several seeds.
+- [ ] **CI workflow not committed.** The YAML is in README (tests on every
+      push; the hoocode and Copilot end-to-end runs, all three hosts, on pull
+      requests); committing it needs a token with the `workflow` scope. See it
+      through its first green run, and add several concurrency seeds.
+- [ ] **VS Code's Chat view does not host canvases** (1.139): its Copilot
+      sessions set no `requestCanvasRenderer` / `requestExtensions`. When
+      microsoft/vscode#337780 (Agents window, `sessions.experimental.canvases.enabled`)
+      ships, run the canvas in it for real; `--host sdk` already mirrors its
+      configuration. Note it ignores canvases restored on resume, so the agent
+      re-opens, and parking brings the document back within a minute.
+- [ ] **No selection pill in Copilot's terminal or VS Code.** The runtime
+      accepts `sendAttachmentsToMessage` (`session.extensions.attachments_pushed`)
+      but neither host shows it yet; "this" costs the agent one call to read
+      `looking_at`. Nothing to change here when they do.
+- [ ] **Copilot needs experimental mode** for canvases (1.0.89). Drop the
+      warning's wording about it when Copilot turns canvases on by default.
+- [ ] **The GitHub Copilot app** hosts canvases through the same SDK contract as
+      `--host sdk` but was not run here.
 - [ ] **Screenshots, focus, layout and `.png` export need an open editor tab.**
       With none, `screenshot` falls back to the approximate SVG renderer and the
       others refuse with `no_editor`. A headless draw.io (Playwright, when

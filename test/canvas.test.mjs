@@ -57,8 +57,24 @@ describe("canvas declaration", () => {
 			);
 			for (const action of canvas.declaration.actions) {
 				assert.ok(action.description?.length > 20, `${action.name} needs a description the model can act on`);
-				assert.equal(action.inputSchema.type, "object");
+				// Copilot validates input against this before the canvas sees it, and tells
+				// the model to send null for "no input": allowed exactly when nothing is required.
+				assert.deepEqual(action.inputSchema.type, action.inputSchema.required?.length ? "object" : ["object", "null"], action.name);
 			}
+			assert.deepEqual(canvas.declaration.inputSchema.type, ["object", "null"]);
+		});
+	});
+
+	it("fits GitHub Copilot's list_canvas_capabilities inline", async () => {
+		// Copilot answers list_canvas_capabilities with this, pretty-printed, and
+		// hands the model anything over 20 KiB only as a file path to go and read:
+		// one more model turn before the agent can do anything. 19 KiB keeps a
+		// margin; a new action or input pays for itself by trimming words elsewhere.
+		await withCanvas({}, ({ canvas }) => {
+			const { id, displayName, inputSchema, actions } = canvas.declaration;
+			const listing = { extensionId: "plugin:drawio-canvas:drawio-canvas", canvasId: id, displayName, inputSchema, actions };
+			const bytes = Buffer.byteLength(JSON.stringify(listing, null, 2));
+			assert.ok(bytes <= 19 * 1024, `the capability listing is ${bytes} bytes; Copilot inlines at most 20,480`);
 		});
 	});
 });

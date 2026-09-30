@@ -23,7 +23,7 @@
 import { CanvasError, createCanvas, joinSession } from "@github/copilot-sdk/extension";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { AgentLink } from "./lib/agent.mjs";
+import { AgentLink, canvasSupportNote } from "./lib/agent.mjs";
 import { createDrawioCanvas } from "./lib/canvas.mjs";
 
 /**
@@ -48,10 +48,12 @@ const canvas = createDrawioCanvas(
 		extensionDir: path.dirname(fileURLToPath(import.meta.url)),
 		log: (message) => logLine(message),
 		agent,
+		parkOnExit: true,
 	},
 );
 
 const session = await joinSession({ canvases: [canvas] });
 logLine = (message) => void session.log(message);
 agent.attach(session);
-await session.log("drawio-canvas ready");
+const note = canvasSupportNote(session);
+await session.log(note ?? "drawio-canvas ready", note ? { level: "warning" } : undefined);

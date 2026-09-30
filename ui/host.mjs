@@ -373,6 +373,9 @@ export class Bridge {
 		this.flush();
 		await this.queue;
 		await this.resync("the canvas restarted; you are on its current version", { kind: "" });
+		// The new process knows nothing of where the person is: say so now, not at
+		// their next click, so "this" still means their selection.
+		this.schedulePresence();
 	}
 
 	/** Flash the cells the agent touched, once, so a change never appears unexplained. */

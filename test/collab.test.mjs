@@ -161,6 +161,8 @@ describe("asks through the canvas", () => {
 			assert.equal(host.sent[0].mode, "enqueue");
 			assert.match(host.sent[0].prompt, new RegExp(`#${ask.id} "Make the check a diamond" — cells check on "Flow"`));
 			assert.match(host.sent[0].prompt, new RegExp(`instanceId ${opened.instanceId}`));
+			// The timeline shows the person's words, not the instructions to the agent.
+			assert.equal(host.sent[0].displayPrompt, '[draw.io canvas] "Make the check a diamond"');
 		} finally {
 			await opened.close();
 		}
@@ -296,6 +298,7 @@ describe("asks through the canvas", () => {
 			clock += DIGEST.agentIdleMs + DIGEST.personQuietMs;
 			assert.equal(await collab.checkDigest(), true);
 			assert.match(host.sent.at(-1).prompt, /paused after editing/);
+			assert.match(host.sent.at(-1).displayPrompt, /^\[draw\.io canvas\] you paused after \d+ changes?; asked the agent/);
 			assert.equal(await collab.checkDigest(), false, "one per idle stretch");
 
 			// The agent's next turn re-arms it; the person can turn it off.

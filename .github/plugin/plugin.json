@@ -1,0 +1,10 @@
+{
+	"name": "drawio-canvas",
+	"version": "0.4.0",
+	"description": "The full draw.io editor (pinned 31.4.6, bundled, offline) as a canvas that a person and an agent edit at the same time: every shape library, layers and pages for the person; cell edits, library shapes, layouts, tidy and screenshots for the agent; asks from the canvas and a quiet agent status for the person.",
+	"author": { "name": "kolisachint" },
+	"homepage": "https://github.com/kolisachint/drawio-canvas",
+	"repository": "https://github.com/kolisachint/drawio-canvas",
+	"license": "Apache-2.0",
+	"keywords": ["drawio", "diagram", "canvas", "architecture", "collaboration"]
+}
