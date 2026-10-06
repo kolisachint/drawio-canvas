@@ -975,7 +975,7 @@ function renderCollab(state) {
 	$("delivery-note").textContent =
 		state.delivery === "send"
 			? ""
-			: "This host cannot wake the agent: asks wait until its next action on this canvas. Mention them in the terminal to get it going.";
+			: agent.nudge || "This host cannot wake the agent: asks wait until its next action on this canvas. Tell it to check your asks to get it going.";
 }
 
 function askRow(ask, delivery) {

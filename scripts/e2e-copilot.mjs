@@ -779,6 +779,9 @@ try {
 	let url = opened.results[1].match(/http:\/\/127\.0\.0\.1:\d+\/[A-Za-z0-9_-]+\//)?.[0];
 	check(url, `open_canvas: ${opened.results[1]}`);
 	check(!failed(opened.results[0]) && /"edit_diagram"/.test(opened.results[0]), `list_canvas_capabilities should list the actions inline: ${opened.results[0].slice(0, 300)}`);
+	// The plugin's MCP server (for VS Code's Chat view) runs here too, and must
+	// offer Copilot none of its tools: the canvas is already here.
+	check(!opened.tools.some((name) => /drawio-canvas|get_diagram|edit_diagram/.test(name)), `Copilot should get the canvas once, not the MCP tools too: ${opened.tools.join(", ")}`);
 	if (TERMINAL) {
 		// VS Code's terminal panel is a dozen rows: the earlier line may have scrolled by.
 		if (HOST === "tui") await host.until(/Canvas opened: Draw\.io Canvas/, "the TUI to report the canvas", 60_000);

@@ -1,8 +1,8 @@
 # drawio-canvas
 
-The full draw.io editor, as a canvas for **GitHub Copilot** (the CLI, in a
-terminal or in VS Code) and **hoocode**, that a person and an agent edit **at
-the same time**.
+The full draw.io editor, as a canvas for **GitHub Copilot** (VS Code's Chat
+view, and the CLI) and **hoocode**, that a person and an agent edit **at the
+same time**.
 
 The person gets draw.io itself in their browser — the same editor as the
 desktop app: every shape library (AWS, Azure, GCP, Kubernetes, Cisco, IBM, SAP,
@@ -16,7 +16,8 @@ The person can also ask the agent for things from the canvas, see quietly
 whether it is busy and on what, and fix small things instantly without it.
 
 In GitHub Copilot, ask for it ("open the draw.io canvas and sketch our
-architecture") and the agent opens it; in hoocode, `/canvas open drawio-canvas`.
+architecture") and the agent opens it — in VS Code, beside the chat; in hoocode,
+`/canvas open drawio-canvas`.
 
 No desktop app, no service to run, no network: draw.io **31.4.6** ships in this
 repository (`assets/drawio-31.4.6.war`, draw.io's own release archive, pinned by
@@ -57,8 +58,58 @@ silently unreachable.
 
 ### In VS Code
 
-Run the Copilot CLI in VS Code's integrated terminal (`copilot --experimental`,
-installed as above), and let VS Code open the canvas beside your code: with
+**In the Chat view**, with your Copilot subscription and any Copilot model: VS
+Code's Chat has no canvases, so the plugin also carries the canvas as an MCP
+server (`.mcp.json` → `mcp.mjs`) — the same document, sync and tools — and the
+agent opens draw.io in VS Code's **Integrated Browser**, beside the chat.
+
+Install it once, either way:
+
+- **Already installed with the Copilot CLI** (above)? VS Code has it too: it
+  loads the plugins the Copilot CLI installed from a marketplace.
+- Otherwise, Command Palette → **Chat: Install Plugin from Source** →
+  `kolisachint/drawio-canvas` (or the path of a clone), and **Trust**.
+
+Then ask in the Chat view, in Agent mode: *"open the draw.io canvas and sketch
+our architecture"*. The agent calls `open_canvas` and shows the editor with
+`open_browser_page`. VS Code asks before the canvas's first tool that changes
+something: pick **Allow Tools from drawio-canvas in this Session** (or
+**Always**) from the Allow button's menu and it will not ask again. Reads
+(`get_diagram`, `get_changes`, `search_shapes`, `get_asks`) never ask.
+
+What differs from a canvas host, because MCP cannot start a chat turn or see
+the agent's state:
+
+- An **ask** from the canvas's bar waits for the agent's next step on the
+  canvas. To start it, send **`/mcp.drawio-canvas.asks`** in the Chat (the bar
+  says so). `/mcp.drawio-canvas.review` asks it to look over what you changed,
+  and `/mcp.drawio-canvas.draw` opens the canvas and draws what you type.
+- No busy/idle chip and no idle digest: VS Code does not tell an MCP server what
+  the agent is doing.
+- Everything else is the same: your edits reach the agent with its next result,
+  its blind edits over yours are refused with your version attached, "this"
+  means your selection, and `screenshot` hands the model draw.io's rendering as
+  an image. Reloading the window, or VS Code restarting the server, keeps your
+  tab: the canvas is parked and taken back on the same URL.
+
+Needs Node.js 20.6 or newer on `PATH`: VS Code starts the server with `node`.
+Any other MCP client can run it by hand:
+
+```jsonc
+// .vscode/mcp.json (VS Code), or your client's MCP configuration
+{ "servers": { "drawio-canvas": { "type": "stdio", "command": "node", "args": ["/path/to/drawio-canvas/mcp.mjs"] } } }
+```
+
+Tested end to end in VS Code 1.139.1 (`scripts/e2e-vscode-chat.mjs`), installed
+both ways: the Chat agent opening the canvas in the Integrated Browser and
+drawing, one confirmation, the person's edits reaching it, a refused blind edit
+rebuilt on the person's version, an ask sent with `/mcp.drawio-canvas.asks`,
+"this", a screenshot the model sees, a server restart keeping the tab, and every
+tool.
+
+**The Copilot CLI in VS Code's terminal** works too, with the full canvas
+(asks that wake the agent, the status chip). Run `copilot --experimental` in the
+integrated terminal, with
 
 ```jsonc
 // settings.json
@@ -67,24 +118,15 @@ installed as above), and let VS Code open the canvas beside your code: with
 "terminal.integrated.env.linux": { "COPILOT_CANVAS_NATIVE_WINDOW": "false" }   // .osx / .windows likewise
 ```
 
-Ctrl/Cmd+click on *Open in browser* in the terminal opens the full draw.io in a
-VS Code **Integrated Browser** tab beside your code. Tested end to end in VS Code
-1.139 (`scripts/e2e-copilot.mjs --host vscode`): the agent's edits appearing
-there, the bar showing it busy, the person's edits reaching it, a refused blind
-edit rebuilt on the person's version, an ask from the canvas (`Alt+A`) waking
-the agent, "this" meaning the selection, an extension reload keeping the tab,
-and every action, screenshots and PNGs rendered in that tab included.
+and Ctrl/Cmd+click *Open in browser* to get the canvas in an Integrated Browser
+tab (`scripts/e2e-copilot.mjs --host vscode`). In that terminal session the
+MCP server stays out of the way: it offers the Copilot CLI no tools, since the
+canvas is there.
 
-VS Code's **Chat view** does not host canvases yet (VS Code 1.139): its own
-agent has no canvases, and its Copilot CLI session type asks the Copilot runtime
-for neither a canvas renderer nor extensions, so the agent there is never
-offered `open_canvas`. Canvas support for VS Code's Agents window is in progress
+VS Code's **Agents window** is getting Copilot canvases
 ([microsoft/vscode#337780](https://github.com/microsoft/vscode/pull/337780),
-behind `sessions.experimental.canvases.enabled`); this canvas is tested against
-the exact configuration that change uses — the Copilot SDK with
-`requestExtensions`, `requestCanvasRenderer`, the plugin as a plugin directory,
-and extensions launched as VS Code launches them (`--host sdk`) — so it should
-open in a tab beside the chat once that ships.
+behind `sessions.experimental.canvases.enabled`); the canvas is tested against
+the exact configuration that change uses (`scripts/e2e-copilot.mjs --host sdk`).
 
 ### From hoocode
 
@@ -146,9 +188,9 @@ node scripts/install-drawio.mjs
 | | Supported |
 |---|---|
 | **GitHub Copilot CLI** | **1.0.89 or newer, in experimental mode** (tested with 1.0.89 and `@github/copilot-sdk` 1.0.15). Installed as a plugin or by hand; opened by the agent; shown in Copilot's own canvas window, or at the URL it prints. |
-| **VS Code** | **1.139**, through the Copilot CLI in the integrated terminal, with the canvas in an Integrated Browser tab (see *In VS Code*). The Chat view does not host canvases yet. |
+| **VS Code** | **1.139**: the Chat view (Copilot's agent, any model) through the MCP server, and the Copilot CLI in the integrated terminal; the canvas in an Integrated Browser tab either way (see *In VS Code*). |
 | **hoocode** | **0.5.81 or newer.** 0.5.81 is the first release that tells a canvas its working directory; on older releases the canvas opens, but **Open…** / **Save** and the `open_file` / `save_file` / `screenshot` actions need `DRAWIO_CANVAS_WORKSPACE` set. Asks that wake the agent, the agent status chip, the idle digest and the selection pill need a release after 0.5.87 (canvas `session.send`, `session.on` and `sendAttachmentsToMessage`); on an older one the canvas works as before and asks wait for the agent's next canvas call. |
-| **Node.js** | **20.6 or newer** on `PATH` for hoocode (it forks canvases with Node, also when hoocode itself is the standalone binary). GitHub Copilot runs extensions with the Node it bundles. No npm install, no build, no dependencies. |
+| **Node.js** | **20.6 or newer** on `PATH` for hoocode (it forks canvases with Node, also when hoocode itself is the standalone binary) and for VS Code's Chat view (it starts the MCP server with `node`). The Copilot CLI runs extensions with the Node it bundles. No npm install, no build, no dependencies. |
 | **OS** | macOS, Linux and Windows 10/11. Nothing is native; the only platform difference is the cache directory below. |
 | **Browser** | Any current browser draw.io supports (Chrome, Edge, Firefox, Safari), VS Code's Integrated Browser, and Copilot's canvas window (WebKitGTK on Linux, WebKit on macOS, WebView2 on Windows). The page is served on `127.0.0.1`; the end-to-end tests run in Chromium, in VS Code, and in Copilot's window on Linux. |
 | **draw.io** | 31.4.6, bundled and pinned by SHA-256. Files are ordinary `.drawio` and open in any draw.io (desktop, app.diagrams.net) and vice versa. |
@@ -165,6 +207,7 @@ On first open the bundled archive is verified and unpacked into the cache
 | `DRAWIO_CANVAS_DRAWIO_DIR` | Serve an already-unpacked draw.io webapp instead (e.g. a checkout's `src/main/webapp`). |
 | `DRAWIO_CANVAS_DRAWIO_WAR` | Install from another copy of the pinned `draw.war`. |
 | `DRAWIO_CANVAS_OFFLINE=1` | Never fall back to downloading, even if the bundled archive is missing. |
+| `DRAWIO_CANVAS_MCP` | The MCP server's tools: `on` offers them even to the Copilot CLI and hoocode (which run the canvas instead, so they get none by default), `off` to no one. |
 
 ---
 
@@ -277,13 +320,19 @@ GitHub Copilot adds none, so there the canvas's own rules above are the whole of
 it: nothing is sent on an edit, and the digest goes at most once per idle
 stretch.
 
+**In VS Code's Chat view** (the MCP server) the canvas cannot send at all: an
+ask waits for the agent's next step on the canvas, and the person starts it with
+`/mcp.drawio-canvas.asks` — the bar says so. There is no status chip and no
+digest; "this" still means the selection, found in `looking_at`.
+
 **Quick answers.** An ask anchored to shapes hands the agent those shapes' XML,
 so it can answer in one edit instead of read, think, edit. The agent marks an
 ask `working` as soon as it edits its cells, and its reply shows in the drawer.
 For layout chores, **Tidy** needs no agent at all.
 
 **Reloads keep the tab.** `reload_canvas` (hoocode), `extensions_reload` and
-`/restart` (GitHub Copilot) restart the extension; the canvas keeps its port and
+`/restart` (GitHub Copilot) restart the extension, and VS Code restarts the MCP
+server on a window reload; the canvas keeps its port and
 token, the page's event stream reconnects by itself, catches up, tells the new
 process where the person is, and the diagram and the asks are still there.
 hoocode closes the instance first; Copilot stops the process with a signal and
@@ -335,6 +384,19 @@ model's call to Copilot's next model request:
 A real model's turn takes seconds, so what the person feels is the model; the
 canvas and Copilot together stay well under a second per step.
 
+In VS Code's Chat view (`scripts/e2e-vscode-chat.mjs`, VS Code 1.139.1 under a
+virtual display with no GPU) the canvas does the same work in the same time,
+and VS Code's own handling of a tool call dominates:
+
+| What | VS Code Chat view (MCP) |
+|---|---|
+| Install Plugin from Source → installed | ~4 s |
+| First prompt → MCP server started, its tools offered to the model | ~3.4 s |
+| First prompt → draw.io ready in the Integrated Browser (open_canvas, one confirmation, open_browser_page) | ~11 s, of which ~4 s is unpacking draw.io the very first time |
+| Each tool call, from the model's call to VS Code's next request | 0.9–1.3 s (the canvas's part: ~1 ms, as above) |
+| `/mcp.drawio-canvas.asks` → the agent's reply in the drawer (four scripted model turns) | ~5.5 s |
+| The MCP server killed → next prompt answered, the person's tab reconnected | ~3.2 s |
+
 ---
 
 ## Security
@@ -369,12 +431,14 @@ gate is not in front of it. So:
 ```
 extension.mjs        the host-facing surface
 extensions/drawio-canvas/extension.mjs   the same canvas, where GitHub Copilot loads a plugin's extensions
-.github/plugin/      plugin.json and marketplace.json for GitHub Copilot
-.agents-plugin/      plugin.json and marketplace.json for hoocode's /plugin
+mcp.mjs              the same canvas as an MCP server, for VS Code's Chat view (declared in .mcp.json)
+.github/plugin/      plugin.json and marketplace.json for GitHub Copilot (and VS Code)
+.agents-plugin/      plugin.json and marketplace.json for hoocode's /plugin; mcp.json keeps hoocode off the MCP server
 assets/              drawio-31.4.6.war — the pinned draw.io release
 data/                shapes-31.4.6.json.gz — every library shape, for search_shapes
 lib/
   canvas.mjs         the canvas declaration and the actions
+  mcp.mjs            the canvas over MCP: tools, prompts, the workspace from roots, resume after a restart
   agent.mjs          the agent as the host reports it (session.on) and how to reach it (session.send)
   asks.mjs           the person's asks, and when the canvas speaks (the idle digest)
   collab.mjs         one instance's asks, delivery, digest and selection pill
@@ -395,8 +459,8 @@ ui/
   index.html host.mjs host.css   the page around draw.io and the sync bridge
   capture.js         the one script added to draw.io's page
   lite/              the canvas's own small editor, a fallback at /lite/
-scripts/             install-drawio.mjs, build-shape-index.mjs
-test/                unit, protocol, lite-browser and draw.io end-to-end tests
+scripts/             install-drawio.mjs, build-shape-index.mjs, and the end-to-end runs (e2e-*.mjs)
+test/                unit, protocol, MCP, lite-browser and draw.io end-to-end tests
 ```
 
 ## Tests
@@ -415,7 +479,9 @@ DRAWIO_CANVAS_PLAYWRIGHT=/tmp/pw/node_modules/playwright node --test "test/*.tes
 
 `test/drawio.test.mjs` runs the real draw.io in Chromium with the agent editing
 underneath it; `test/collab-browser.test.mjs` does the same for asks, the chip,
-Tidy, the right-click items, badges and a reload.
+Tidy, the right-click items, badges and a reload. `test/mcp.test.mjs` speaks MCP
+to `mcp.mjs` as a client does: tools, prompts, refusals, the Copilot CLI getting
+no tools, and a restart keeping the tab.
 
 The whole collaboration, through a real hoocode, with a scripted model and the
 person in Chromium — install from this checkout as a plugin, open, draw, react
@@ -460,13 +526,27 @@ DRAWIO_CANVAS_PLAYWRIGHT=/tmp/pw/node_modules/playwright \
   xvfb-run -a node scripts/e2e-copilot.mjs --host vscode
 ```
 
+And in VS Code's Chat view, through the MCP server: real VS Code, the plugin
+installed with *Chat: Install Plugin from Source* (or, `--install cli`, with the
+Copilot CLI, which VS Code then finds by itself), the scripted model added as a
+custom-endpoint model and picked in the Chat view, the person approving tools
+in VS Code's own confirmation and working in the Integrated Browser — open,
+draw, refuse and rebuild, an ask sent with `/mcp.drawio-canvas.asks`, "this",
+a screenshot the model receives as an image, a server restart keeping the tab,
+and every tool timed:
+
+```bash
+VSCODE_BIN=<VSCode-linux-x64>/code DRAWIO_CANVAS_PLAYWRIGHT=/tmp/pw/node_modules/playwright \
+  xvfb-run -a node scripts/e2e-vscode-chat.mjs [--out /tmp/vscode-chat-e2e] [--install cli]
+```
+
 ### Continuous integration
 
 Not committed yet: pushing a workflow needs a token with the `workflow` scope,
 which the authoring sessions did not have. Save this as
 `.github/workflows/ci.yml`. It runs the unit and browser tests on every push,
-and the end-to-end runs (hoocode, and GitHub Copilot in all three hosts) on pull
-requests:
+and the end-to-end runs (hoocode, GitHub Copilot in all three hosts, and VS
+Code's Chat view) on pull requests:
 
 ```yaml
 name: CI
@@ -533,6 +613,14 @@ jobs:
           COPILOT_BIN: ${{ runner.temp }}/node_modules/.bin/copilot
           DRAWIO_CANVAS_PLAYWRIGHT: ${{ runner.temp }}/node_modules/playwright
         run: xvfb-run -a node scripts/e2e-copilot.mjs --host vscode
+      - name: VS Code Chat view (the MCP server), installed both ways
+        env:
+          VSCODE_BIN: ${{ runner.temp }}/VSCode-linux-x64/code
+          COPILOT_BIN: ${{ runner.temp }}/node_modules/.bin/copilot
+          DRAWIO_CANVAS_PLAYWRIGHT: ${{ runner.temp }}/node_modules/playwright
+        run: |
+          xvfb-run -a node scripts/e2e-vscode-chat.mjs
+          xvfb-run -a node scripts/e2e-vscode-chat.mjs --install cli
 ```
 
 ## Credits

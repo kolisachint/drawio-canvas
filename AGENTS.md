@@ -13,7 +13,17 @@ forked by the host and speaks the canvas JSON-RPC protocol through
 loads it from `extensions/drawio-canvas/extension.mjs` (a one-line import of the
 root), the only place it looks in an installed plugin; hoocode and a hand clone
 load the root. The two plugin manifests are `.github/plugin/` (Copilot) and
-`.agents-plugin/` (hoocode, which wins precedence when both are present). Each open
+`.agents-plugin/` (hoocode, which wins precedence when both are present).
+
+The same canvas is also an **MCP server** for hosts with no canvases — VS
+Code's Chat view above all: `mcp.mjs` (declared in `.mcp.json`, which VS Code,
+the Copilot CLI and hoocode all read from a plugin) runs `lib/mcp.mjs`, which
+speaks MCP over stdio in front of `createDrawioCanvas` with its own
+`createCanvas`/`CanvasError`. One canvas per server, no instance ids;
+`open_canvas` returns the URL and the agent opens it (`open_browser_page` in
+VS Code). It offers no tools to `copilot-cli` or hoocode (`offersTools`), which
+run the extension, and `.agents-plugin/plugin.json` points hoocode at an empty
+`mcp.json` so hoocode never starts it. Each open
 canvas gets a loopback server (`lib/server.mjs`) that serves:
 
 - `/` — `ui/index.html` + `ui/host.mjs`: a slim bar and draw.io in a same-origin
@@ -44,17 +54,20 @@ once `joinSession` resolves; every instance's `Collaboration` (`lib/collab.mjs`)
 shares it. A host without `send`/`on` leaves it inert and nothing else changes.
 
 The hosts differ in ways that matter here (all verified against the real
-thing by `scripts/e2e-copilot.mjs` and `scripts/e2e-hoocode.mjs`):
+thing by `scripts/e2e-copilot.mjs`, `scripts/e2e-vscode-chat.mjs` and
+`scripts/e2e-hoocode.mjs`):
 
-| | hoocode | GitHub Copilot |
-|---|---|---|
-| Who opens it | the person, `/canvas open` | the agent, `open_canvas` (it asks `list_canvas_capabilities` first) |
-| Canvas tools offered | always | only where the session renders canvases: the CLI in experimental mode, or an SDK host that sets `requestCanvasRenderer` (VS Code's Agents window, in progress). `canvasSupportNote` tells the person otherwise |
-| `input` | JSON-decoded if a string | validated against the declared schema *before* it reaches the canvas; `null` is what the model is told to send for "no input" |
-| Large results | cut at 8,000 characters | over 20 KiB, only a file path reaches the model |
-| Messages from `session.send` | labelled `[canvas <id>]`, rate-limited | unlabelled and unlimited; `displayPrompt` is the timeline's line |
-| Selection pill | shown | accepted, not shown (the agent reads `looking_at`) |
-| Reload | `canvas.close`, then a new process | a signal, then `canvas.open` of the same instance in a new process |
+| | hoocode | GitHub Copilot (CLI, SDK) | VS Code Chat view (MCP) |
+|---|---|---|---|
+| Who opens it | the person, `/canvas open` | the agent, `open_canvas` (it asks `list_canvas_capabilities` first) | the agent, `open_canvas`, then `open_browser_page` shows it in the Integrated Browser |
+| Canvas tools offered | always | only where the session renders canvases: the CLI in experimental mode, or an SDK host that sets `requestCanvasRenderer` (VS Code's Agents window, in progress). `canvasSupportNote` tells the person otherwise | always, as `mcp_drawio-canvas_<action>`, with the server's instructions in the system prompt |
+| `input` | JSON-decoded if a string | validated against the declared schema *before* it reaches the canvas; `null` is what the model is told to send for "no input" | an object (MCP requires `type: object`); the canvas validates it |
+| Large results | cut at 8,000 characters | over 20 KiB, only a file path reaches the model | passed whole; a screenshot goes as an image |
+| Messages from the canvas | `session.send`, labelled `[canvas <id>]`, rate-limited | `session.send`, unlabelled and unlimited; `displayPrompt` is the timeline's line | none: MCP cannot start a turn. The person sends the server's prompts (`/mcp.drawio-canvas.asks`, `.review`, `.draw`); the bar says so (`AgentLink.nudge`) |
+| Agent status (chip, digest) | `session.on` | `session.on` | none |
+| Selection pill | shown | accepted, not shown (the agent reads `looking_at`) | none (the agent reads `looking_at`) |
+| Confirmation | none | none (`--allow-all` or per tool) | before the first tool that is not `readOnlyHint`; the person allows the server's tools for the session |
+| Reload | `canvas.close`, then a new process | a signal, then `canvas.open` of the same instance in a new process | stdin closed or a signal; the new server takes the parked canvas back at startup (`resume`) |
 
 ## Rules that are not style
 
@@ -62,8 +75,9 @@ thing by `scripts/e2e-copilot.mjs` and `scripts/e2e-hoocode.mjs`):
    non-`node:` import is `@github/copilot-sdk/extension`, resolved by the host.
    `test/protocol.test.mjs` fails the build otherwise. Playwright for tests is
    installed outside (`/tmp/pw`) and named by `DRAWIO_CANVAS_PLAYWRIGHT`.
-2. **stdout is the JSON-RPC channel.** Log with `session.log` (the `log`
-   callback), never `console.log`, in anything the extension process runs.
+2. **stdout is the JSON-RPC channel** — in the extension and in the MCP server
+   alike. Log with the `log` callback (`session.log` in the extension, stderr in
+   `mcp.mjs`), never `console.log`, in anything either process runs.
 3. **After editing `extension.mjs` or `lib/`, reload the extension**
    (`reload_canvas` in hoocode, `extensions_reload` or `/restart` in Copilot);
    the running child was forked from the old code. The person's tab reconnects by
@@ -83,7 +97,8 @@ thing by `scripts/e2e-copilot.mjs` and `scripts/e2e-hoocode.mjs`):
    idle and 20 s of quiet, switchable). Never add a send on edit, on presence, or
    on a timer: a canvas is edited continuously, and every send is a model turn
    the person pays for. The selection pill is not a send; it rides the person's
-   own next message.
+   own next message. Over MCP nothing can send; the person's gesture is
+   one of the server's prompts, typed in the chat.
 8. **New UI goes in the page around draw.io, not in draw.io.** `ui/host.mjs` and
    `ui/index.html` own the bar and the drawer. The only reach into draw.io is
    through its runtime API, feature-detected and failing to nothing:
@@ -105,10 +120,15 @@ thing by `scripts/e2e-copilot.mjs` and `scripts/e2e-hoocode.mjs`):
     draw anything. A new action or field pays for itself by trimming words
     elsewhere; a rule that applies to many actions goes in the canvas
     description once (as the page selector's does).
-11. **Keep both entry points and both manifests.** `extensions/drawio-canvas/`
+11. **Keep the entry points and the manifests.** `extensions/drawio-canvas/`
     must stay a one-line import of the root `extension.mjs` (Copilot finds a
-    plugin's canvas nowhere else; a symlink would loop), and the versions in
-    `.github/plugin/` and `.agents-plugin/` move together.
+    plugin's canvas nowhere else; a symlink would loop); `mcp.mjs` and
+    `.mcp.json` are how VS Code's Chat view gets the canvas; the versions in
+    `.github/plugin/` and `.agents-plugin/` move together (the MCP server reports
+    the former's). **Never let a host get the canvas twice**: the MCP server
+    offers no tools to a client that runs the extension (`offersTools`; add a
+    host there when one starts plugin MCP servers *and* canvases), and
+    `.agents-plugin/plugin.json` keeps hoocode off `.mcp.json`.
 
 ## Testing
 
@@ -143,9 +163,36 @@ configured exactly as VS Code's Agents window configures it) and `--host vscode`
 the Integrated Browser after Ctrl+clicking the link). Needs `@github/copilot` and
 `@github/copilot-sdk` installed outside the checkout, like Playwright. Run it
 after the same kinds of change as the hoocode one, and after anything touching
-schemas, `extension.mjs`, parking, or `session.send`.
+schemas, `extension.mjs`, parking, or `session.send`. It also checks that the Copilot
+agent is never offered the MCP server's tools next to the canvas's.
+
+VS Code's Chat view end to end is `scripts/e2e-vscode-chat.mjs`: real VS Code
+under `xvfb-run`, the plugin installed with *Chat: Install Plugin from Source*
+(default) or by the Copilot CLI (`--install cli`, which VS Code discovers), the
+scripted model as a custom-endpoint model picked in the Chat view, the person
+answering VS Code's tool confirmations and working in the Integrated Browser.
+Run it after changing `lib/mcp.mjs`, `mcp.mjs`, `.mcp.json`, a tool's contract or
+the page's nudge. Two things it learned the hard way: VS Code needs
+`--password-store=basic` without a keyring (MCP startup waits on secret storage),
+and a fresh profile starts Copilot Chat's model providers only once the person
+opens Manage Models.
 
 ## Recent changes
+
+- **VS Code's Chat view, with the person's Copilot subscription.** The plugin
+  now also carries the canvas as an MCP server (`.mcp.json` → `mcp.mjs` →
+  `lib/mcp.mjs`): `open_canvas` plus the 16 actions as tools, the playbook as
+  server instructions (`PLAYBOOK` in `lib/canvas.mjs`, shared with the canvas
+  description), reads marked `readOnlyHint` so VS Code runs them without asking,
+  the screenshot returned as an image, and three prompts (`asks`, `review`,
+  `draw`) that are how the person starts the agent, since MCP cannot. The page's
+  "cannot wake the agent" note comes from the host (`AgentLink.nudge`) and names
+  `/mcp.drawio-canvas.asks`. The workspace comes from MCP roots; a restarted
+  server takes the parked canvas back at startup, so the tab keeps its URL. The
+  Copilot CLI and hoocode start plugin MCP servers too: the server offers
+  `copilot-cli` no tools, and hoocode's manifest points it at an empty
+  `mcp.json`. Verified in VS Code 1.139.1 installed both ways, and the Copilot
+  (terminal, SDK) and hoocode runs re-checked with the server in the plugin.
 
 - **GitHub Copilot, and VS Code through it.** Loads as a Copilot plugin
   (`.github/plugin/`, `extensions/drawio-canvas/extension.mjs`) and was run end
@@ -261,13 +308,26 @@ Open work, roughly by value. Each is a place to pick up.
       push; the hoocode and Copilot end-to-end runs, all three hosts, on pull
       requests); committing it needs a token with the `workflow` scope. See it
       through its first green run, and add several concurrency seeds.
-- [ ] **VS Code's Chat view does not host canvases** (1.139): its Copilot
-      sessions set no `requestCanvasRenderer` / `requestExtensions`. When
-      microsoft/vscode#337780 (Agents window, `sessions.experimental.canvases.enabled`)
-      ships, run the canvas in it for real; `--host sdk` already mirrors its
-      configuration. Note it ignores canvases restored on resume, so the agent
-      re-opens, and parking brings the document back within a minute.
-- [ ] **No selection pill in Copilot's terminal or VS Code.** The runtime
+- [ ] **VS Code's Agents window canvases.** When microsoft/vscode#337780
+      (`sessions.experimental.canvases.enabled`) ships, run the canvas in it for
+      real; `--host sdk` already mirrors its configuration. It ignores canvases
+      restored on resume, so the agent re-opens, and parking brings the document
+      back within a minute. Check then that its sessions do not also get the MCP
+      tools (its runtime is the Copilot CLI's, so `offersTools` should hold).
+- [ ] **VS Code Chat cannot be woken by the canvas, and shows no agent status.**
+      MCP has no way to start a chat turn or observe the agent; asks wait for the
+      agent's next tool call or the person's `/mcp.drawio-canvas.asks`. If VS
+      Code grows either (or MCP Apps can post to the chat), wire it into
+      `AgentLink` in `lib/mcp.mjs` and drop the nudge.
+- [ ] **VS Code adds ~1 s per tool call** in the Chat view (measured under xvfb,
+      no GPU): prefer many operations per call even more there. Re-measure on a
+      real desktop.
+- [ ] **This checkout as a workspace.** A client that reads a project's
+      `.mcp.json` (Claude Code, VS Code's discovery) opened *on this repository*
+      starts `${PLUGIN_ROOT}/mcp.mjs` with the token unexpanded and it fails.
+      Harmless for installs (hosts expand it for plugins); a form every host
+      expands would fix it for contributors.
+- [ ] **No selection pill in Copilot's terminal or VS Code** (nor over MCP). The runtime
       accepts `sendAttachmentsToMessage` (`session.extensions.attachments_pushed`)
       but neither host shows it yet; "this" costs the agent one call to read
       `looking_at`. Nothing to change here when they do.

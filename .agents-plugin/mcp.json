@@ -1,0 +1,4 @@
+{
+	"$comment": "hoocode runs this plugin's canvas extension, so it needs no MCP server. Without this file it would start the one in /.mcp.json (for VS Code's Chat view), and hold a project-scope install back until trusted.",
+	"mcpServers": {}
+}
